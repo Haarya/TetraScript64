@@ -604,7 +604,11 @@ function initTerminalEngine() {
                 }
             }
         } else if (command === 'stash_audio') {
-            resWrap.innerHTML = `<div class="text-zinc-500 animate-pulse">Awaiting audio payload selection (.mp3, .wav)...</div>`;
+            const btnId = 'btn-audio-' + Date.now();
+            resWrap.innerHTML = `
+                <div class="text-zinc-500 mb-3">Awaiting audio payload selection (.mp3, .wav)...</div>
+                <button id="${btnId}" class="bg-white text-black font-bold px-4 py-2 text-xs uppercase tracking-widest hover:bg-zinc-300 transition-colors">SELECT AUDIO FILE</button>
+            `;
             outputContainer.appendChild(resWrap);
 
             const fileInput = document.createElement('input');
@@ -639,11 +643,21 @@ function initTerminalEngine() {
                     resWrap.innerHTML = `<span class="text-red-500">Encryption Fault: ${err.message}</span>`;
                 }
             };
-            fileInput.click();
+
+            document.getElementById(btnId).addEventListener('click', () => {
+                fileInput.click();
+            });
+            // Auto hide form logic
+            inputEl.value = '';
+            setTimeout(() => { mainEl.scrollTo({ top: mainEl.scrollHeight, behavior: 'auto' }); }, 10);
             return;
 
         } else if (command === 'stash_video') {
-            resWrap.innerHTML = `<div class="text-zinc-500 animate-pulse">Awaiting video payload selection (.mp4)...</div>`;
+            const btnId = 'btn-video-' + Date.now();
+            resWrap.innerHTML = `
+                <div class="text-zinc-500 mb-3">Awaiting video payload selection (.mp4)...</div>
+                <button id="${btnId}" class="bg-white text-black font-bold px-4 py-2 text-xs uppercase tracking-widest hover:bg-zinc-300 transition-colors">SELECT VIDEO FILE</button>
+            `;
             outputContainer.appendChild(resWrap);
 
             const fileInput = document.createElement('input');
@@ -687,7 +701,12 @@ function initTerminalEngine() {
                     resWrap.innerHTML = `<span class="text-red-500">Encryption Fault: ${err.message}</span>`;
                 }
             };
-            fileInput.click();
+
+            document.getElementById(btnId).addEventListener('click', () => {
+                fileInput.click();
+            });
+            inputEl.value = '';
+            setTimeout(() => { mainEl.scrollTo({ top: mainEl.scrollHeight, behavior: 'auto' }); }, 10);
             return;
         } else if (command === 'unlock') {
             if (!args) {
@@ -798,33 +817,107 @@ function initTerminalEngine() {
     });
 
     // Initialize DRAG and DROP
-    window.addEventListener('drop', (e) => {
+    window.addEventListener('drop', async (e) => {
         e.preventDefault();
         e.stopPropagation();
         if (state.activeTab !== 'terminal') return;
 
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             const file = e.dataTransfer.files[0];
-            if (!file.name.endsWith('.ts64') && !file.name.endsWith('.ts64vid')) return;
+            const lowerName = file.name.toLowerCase();
 
-            const id = file.name.split('_')[1]?.split('.')[0];
-            if (!id) return;
+            if (lowerName.endsWith('.ts64') || lowerName.endsWith('.ts64vid')) {
+                const id = file.name.split('_')[1]?.split('.')[0];
+                if (!id) return;
 
-            const reader = new FileReader();
-            reader.onload = async function (evt) {
-                const buffer = evt.target.result;
-                await dbSet('TS64_STASH_' + id, new Uint8Array(buffer));
+                const reader = new FileReader();
+                reader.onload = async function (evt) {
+                    const buffer = evt.target.result;
+                    await dbSet('TS64_STASH_' + id, new Uint8Array(buffer));
 
+                    const wrp = document.createElement('div');
+                    wrp.className = 'mt-2 mb-4 border-l border-white/20 pl-4 py-2 text-sm';
+                    wrp.innerHTML = `
+                        <div class="font-bold text-white mb-2">BACKUP IMPORTED</div>
+                        <div class="text-zinc-500">Key Restored: ${id}</div>
+                    `;
+                    outputContainer.appendChild(wrp);
+                    mainEl.scrollTop = mainEl.scrollHeight;
+                };
+                reader.readAsArrayBuffer(file);
+            } else if (file.type.startsWith('audio/') || lowerName.endsWith('.mp3') || lowerName.endsWith('.wav')) {
                 const wrp = document.createElement('div');
                 wrp.className = 'mt-2 mb-4 border-l border-white/20 pl-4 py-2 text-sm';
-                wrp.innerHTML = `
-                    <div class="font-bold text-white mb-2">BACKUP IMPORTED</div>
-                    <div class="text-zinc-500">Key Restored: ${id}</div>
-                `;
+                wrp.innerHTML = `<div class="text-zinc-500 animate-pulse">Encrypting dropped audio: ${file.name}...</div>`;
+                outputContainer.appendChild(wrp);
+
+                const pwd = generatePassword();
+                const id = pwd.split('-')[1];
+
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const encryptedBuffer = await encryptData(arrayBuffer, pwd);
+                    await dbSet('TS64_STASH_' + id, encryptedBuffer);
+
+                    wrp.innerHTML = `
+                        <div class="font-bold text-white mb-3 tracking-wider border-b border-white/10 pb-2">AUDIO STASH SECURED</div>
+                        <div class="mb-2 text-zinc-500">File: <span class="text-white">${file.name}</span></div>
+                        <div class="mb-2 text-zinc-500">Encryption: <span class="text-white">AES-GCM 256-bit</span></div>
+                        <div class="mb-2 text-zinc-500">Location: <span class="text-white">IndexedDB (Local Vault)</span></div>
+                        <div class="mt-4 p-4 border border-zinc-500 bg-zinc-500/10 text-center relative group cursor-pointer" onclick="navigator.clipboard.writeText('${pwd}'); this.querySelector('.copy-txt').innerText = 'COPIED!'; setTimeout(() => this.querySelector('.copy-txt').innerText = 'CLICK TO COPY', 2000);">
+                            <div class="text-white font-bold mb-2 uppercase tracking-widest">Access Key</div>
+                            <div class="text-2xl font-mono text-white tracking-widest">${pwd}</div>
+                            <div class="copy-txt absolute top-2 right-2 text-xs text-white font-bold opacity-0 group-hover:opacity-100 transition-opacity">CLICK TO COPY</div>
+                        </div>
+                    `;
+                } catch (err) {
+                    wrp.innerHTML = `<span class="text-red-500">Encryption Fault: ${err.message}</span>`;
+                }
+                mainEl.scrollTop = mainEl.scrollHeight;
+            } else if (file.type.startsWith('video/') || lowerName.endsWith('.mp4') || lowerName.endsWith('.webm')) {
+                const wrp = document.createElement('div');
+                wrp.className = 'mt-2 mb-4 border-l border-white/20 pl-4 py-2 text-sm';
+                wrp.innerHTML = `<div class="text-zinc-500 animate-pulse">Encrypting dropped video: ${file.name}...</div>`;
+                outputContainer.appendChild(wrp);
+
+                const pwd = generatePassword();
+                const id = pwd.split('-')[1];
+
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const encryptedBuffer = await encryptData(arrayBuffer, pwd);
+
+                    const blob = new Blob([encryptedBuffer], { type: 'application/octet-stream' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `classified_footage_${id}.ts64vid`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+
+                    wrp.innerHTML = `
+                        <div class="font-bold text-white mb-3 tracking-wider border-b border-white/10 pb-2">VIDEO STASH EXPORTED</div>
+                        <div class="mb-2 text-zinc-500">Encryption: <span class="text-white">AES-GCM 256-bit</span></div>
+                        <div class="mb-2 text-zinc-500">Payload: <span class="text-white">classified_footage_${id}.ts64vid</span></div>
+                        <div class="mt-4 p-4 border border-zinc-500 bg-zinc-500/10 text-center relative group cursor-pointer" onclick="navigator.clipboard.writeText('${pwd}'); this.querySelector('.copy-txt').innerText = 'COPIED!'; setTimeout(() => this.querySelector('.copy-txt').innerText = 'CLICK TO COPY', 2000);">
+                            <div class="text-white font-bold mb-2 uppercase tracking-widest">Access Key</div>
+                            <div class="text-2xl font-mono text-white tracking-widest">${pwd}</div>
+                            <div class="copy-txt absolute top-2 right-2 text-xs text-white font-bold opacity-0 group-hover:opacity-100 transition-opacity">CLICK TO COPY</div>
+                        </div>
+                    `;
+                } catch (err) {
+                    wrp.innerHTML = `<span class="text-red-500">Encryption Fault: ${err.message}</span>`;
+                }
+                mainEl.scrollTop = mainEl.scrollHeight;
+            } else {
+                const wrp = document.createElement('div');
+                wrp.className = 'mt-2 mb-4 border-l border-red-500/50 pl-4 py-2 text-sm';
+                wrp.innerHTML = `<span class="text-red-500">Error: Unsupported file format dropped. Allowed: .ts64, audio, video.</span>`;
                 outputContainer.appendChild(wrp);
                 mainEl.scrollTop = mainEl.scrollHeight;
-            };
-            reader.readAsArrayBuffer(file);
+            }
         }
     });
 
