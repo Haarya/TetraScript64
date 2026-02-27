@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tetrascript64 Converter</title>
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com" rel="preconnect" />
+    <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap"
+        rel="stylesheet" />
+    <link rel="icon" type="image/png" href="logo.png" />
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+        rel="stylesheet" />
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#ffffff",
+                        "background-light": "#000000",
+                        "background-dark": "#000000",
+                        "terminal-text": "#f4f4f5",
+                        "terminal-dim": "#a1a1aa",
+                    },
+                    fontFamily: {
+                        "mono": ["JetBrains Mono", "monospace"],
+                    },
+                },
+            },
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background-color: #030303;
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #000;
+            border-left: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #3f3f46;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #71717a;
+        }
+
+        /* Grid Background Pattern */
+        .bg-grid {
+            background-size: 30px 30px;
+            background-image:
+                linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+        }
+
+        .crt-scanlines {
+            background: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0) 50%, rgba(0, 0, 0, 0.1) 50%, rgba(0, 0, 0, 0.1));
+            background-size: 100% 4px;
+            pointer-events: none;
+            position: fixed;
+            inset: 0;
+            z-index: 50;
+        }
+
+        .nav-link.active {
+            color: #ffffff;
+            border-bottom: 2px solid #ffffff;
+        }
+    </style>
+</head>
+
+<body class="text-terminal-text overflow-hidden flex flex-col h-screen select-none">
+    <div class="crt-scanlines"></div>
+
+    <!-- Header / Navbar -->
+    <header
+        class="h-14 border-b border-white/20 flex flex-col md:flex-row items-center justify-between px-6 shrink-0 relative z-40 bg-[#030303]">
+        <div class="flex items-center gap-8 h-full">
+            <div class="flex items-center gap-3">
+                <img src="logo.png" alt="Logo" class="w-5 h-5" />
+                <span class="font-bold text-white tracking-widest text-sm uppercase">Tetrascript64</span>
+            </div>
+
+            <nav class="hidden md:flex items-center gap-6 text-[10px] font-bold tracking-[0.15em] text-zinc-500 uppercase h-full pt-1"
+                id="main-nav">
+                <a href="#" class="nav-link active h-full flex items-center px-1 transition-colors hover:text-zinc-300"
+                    data-tab="dashboard">Dashboard</a>
+                <a href="#" class="nav-link h-full flex items-center px-1 transition-colors hover:text-zinc-300"
+                    data-tab="audio">Audio_Enc</a>
+                <a href="#" class="nav-link h-full flex items-center px-1 transition-colors hover:text-zinc-300"
+                    data-tab="video">Video_Enc</a>
+                <a href="#" class="nav-link h-full flex items-center px-1 transition-colors hover:text-zinc-300"
+                    data-tab="terminal">Terminal</a>
+                <a href="#" class="nav-link h-full flex items-center px-1 transition-colors hover:text-zinc-300"
+                    data-tab="help">Help</a>
+            </nav>
+        </div>
+
+        <div class="hidden md:flex items-center gap-6 h-full py-2">
+            <div class="relative flex items-center h-full border border-white/20 px-3 w-64 bg-black/50">
+                <span class="text-zinc-600 mr-2 text-xs">></span>
+                <input type="text" placeholder="SCAN_NETWORK..."
+                    class="bg-transparent border-none text-[10px] w-full focus:outline-none focus:ring-0 text-white placeholder-zinc-700 tracking-widest">
+            </div>
+            <div class="flex flex-col justify-center text-right border-l border-white/20 pl-6 h-full">
+                <span class="font-bold text-white text-[10px] tracking-widest leading-none">ROOT_ADMIN</span>
+                <span class="text-zinc-500 text-[9px] tracking-widest mt-1">ID: 0x8F2</span>
+            </div>
+            <img src="logo.png" class="w-8 h-8 object-contain opacity-50 border border-white/20 p-1" />
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <div class="flex flex-1 overflow-hidden relative z-30 bg-[#030303]">
+
+        <!-- Left Sidebar -->
+        <aside class="w-56 lg:w-64 border-r border-white/20 flex flex-col shrink-0 bg-[#050505]">
+            <div
+                class="p-4 border-b border-white/20 flex justify-between items-center text-[10px] font-bold tracking-widest text-white uppercase">
+                <span>Directory</span>
+                <span class="text-zinc-600">[ROOT]</span>
+            </div>
+            <div class="flex-1 overflow-y-auto p-4 space-y-4 text-xs tracking-wider" id="sidebar-nav">
+                <!-- Injected via JS -->
+            </div>
+            <div class="h-28 border-t border-white/20 p-5 flex flex-col justify-end bg-[#020202]">
+                <div class="flex justify-between items-end text-[10px] text-zinc-500 mb-2 font-bold tracking-widest">
+                    <span>CPU LOAD</span>
+                    <span id="global-cpu" class="text-white">14.2%</span>
+                </div>
+                <div class="w-full bg-white/10 h-[2px]">
+                    <div class="bg-white h-full transition-all duration-1000 ease-in-out w-[14.2%]" id="cpu-bar"></div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Center Viewport -->
+        <main class="flex-1 overflow-y-auto relative bg-grid block" id="main-content">
+            <!-- Content injected via JS -->
+        </main>
+
+        <!-- Right Sidebar -->
+        <aside class="w-72 lg:w-80 border-l border-white/20 flex flex-col shrink-0 bg-[#050505] overflow-y-auto"
+            id="right-sidebar">
+            <!-- Content injected via JS -->
+        </aside>
+    </div>
+
+    <!-- Bottom Footer bar -->
+    <footer
+        class="h-12 border-t border-white/20 flex items-center justify-between px-6 shrink-0 relative z-40 bg-[#020202] text-[10px] font-bold tracking-[0.2em] uppercase text-zinc-500">
+        <div class="flex items-center gap-4 w-56 lg:w-64">
+            <span class="text-white hover:text-zinc-300 cursor-pointer transition-colors">+ CREATE_NODE</span>
+        </div>
+        <div class="flex-1 text-white text-center flex justify-center items-center gap-2">
+            <span>tetrascript64@system:~$</span>
+            <span class="w-2 h-3 bg-white/80 animate-pulse"></span>
+        </div>
+        <div class="flex items-center gap-8 w-72 lg:w-80 justify-end">
+            <span>LAT: <span id="ping-text">4ms</span></span>
+            <span>ENC: AES-256</span>
+            <span class="text-zinc-700 hidden xl:inline">BUILD: V2.4.0</span>
+        </div>
+    </footer>
+
+    <!-- MAIN JAVASCRIPT APP -->
+    <script src="app.js?v=4.6.0"></script>
+</body>
+
+</html>
