@@ -78,6 +78,15 @@
             color: #ffffff;
             border-bottom: 2px solid #ffffff;
         }
+
+        textarea, textarea:focus, textarea:active {
+            outline: none !important;
+            box-shadow: none !important;
+            border: none !important;
+            background: transparent !important;
+            -webkit-appearance: none;
+            appearance: none;
+        }
     </style>
 </head>
 
@@ -137,7 +146,7 @@
             </div>
             <div class="h-28 border-t border-white/20 p-5 flex flex-col justify-end bg-[#020202]">
                 <div class="flex justify-between items-end text-[10px] text-zinc-500 mb-2 font-bold tracking-widest">
-                    <span>CPU LOAD</span>
+                    <span id="cpu-label">VAULT MEMORY</span>
                     <span id="global-cpu" class="text-white">14.2%</span>
                 </div>
                 <div class="w-full bg-white/10 h-[2px]">
@@ -176,7 +185,7 @@
     </footer>
 
     <!-- MAIN JAVASCRIPT APP -->
-    <script src="app.js?v=6.1.0"></script>
+    <script src="app.js?v=6.0.0"></script>
 </body>
 
 </html>
