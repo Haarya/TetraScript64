@@ -180,7 +180,7 @@ function renderTerminalTab() {
                 <span class="text-white font-bold whitespace-nowrap pt-1">tetrascript64@system:~$</span>
                 <form id="cli-form" class="flex-1 flex w-full relative">
                     <textarea id="cli-input"
-                        class="flex-1 w-full bg-transparent border-none text-white p-0 focus:ring-0 font-mono text-lg resize-none overflow-hidden pt-1 leading-relaxed caret-[#ffffff]"
+                        class="flex-1 w-full bg-transparent border-none text-white p-0 focus:ring-0 focus:outline-none outline-none font-mono text-lg resize-none overflow-hidden pt-1 leading-relaxed caret-[#ffffff]"
                         autocomplete="off" autocapitalize="none" autocorrect="off" autofocus spellcheck="false" rows="1"></textarea>
                     
                     <div id="cli-cursor" class="absolute w-2 h-5 bg-white opacity-80 pointer-events-none mt-1.5 transition-all duration-75"></div>
