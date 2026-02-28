@@ -12,16 +12,16 @@ const state = {
 // ============================================================
 // GLOBAL INDEXEDDB LAYER
 // ============================================================
-const DB_NAME    = 'TetraScriptDB';
+const DB_NAME = 'TetraScriptDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'stashes';
 
 function openDB() {
     return new Promise((resolve, reject) => {
         const req = indexedDB.open(DB_NAME, DB_VERSION);
-        req.onerror          = () => reject(req.error);
-        req.onsuccess        = () => resolve(req.result);
-        req.onupgradeneeded  = (e) => {
+        req.onerror = () => reject(req.error);
+        req.onsuccess = () => resolve(req.result);
+        req.onupgradeneeded = (e) => {
             const db = e.target.result;
             if (!db.objectStoreNames.contains(STORE_NAME)) {
                 db.createObjectStore(STORE_NAME);
@@ -33,10 +33,10 @@ function openDB() {
 async function dbSet(key, value) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-        const tx    = db.transaction(STORE_NAME, 'readwrite');
+        const tx = db.transaction(STORE_NAME, 'readwrite');
         const store = tx.objectStore(STORE_NAME);
-        const req   = store.put(value, key);
-        req.onerror   = () => reject(req.error);
+        const req = store.put(value, key);
+        req.onerror = () => reject(req.error);
         req.onsuccess = () => resolve();
     });
 }
@@ -44,10 +44,10 @@ async function dbSet(key, value) {
 async function dbGet(key) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-        const tx    = db.transaction(STORE_NAME, 'readonly');
+        const tx = db.transaction(STORE_NAME, 'readonly');
         const store = tx.objectStore(STORE_NAME);
-        const req   = store.get(key);
-        req.onerror   = () => reject(req.error);
+        const req = store.get(key);
+        req.onerror = () => reject(req.error);
         req.onsuccess = () => resolve(req.result);
     });
 }
@@ -55,10 +55,10 @@ async function dbGet(key) {
 async function dbRemove(key) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-        const tx    = db.transaction(STORE_NAME, 'readwrite');
+        const tx = db.transaction(STORE_NAME, 'readwrite');
         const store = tx.objectStore(STORE_NAME);
-        const req   = store.delete(key);
-        req.onerror   = () => reject(req.error);
+        const req = store.delete(key);
+        req.onerror = () => reject(req.error);
         req.onsuccess = () => resolve();
     });
 }
@@ -66,10 +66,10 @@ async function dbRemove(key) {
 async function dbKeys() {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-        const tx    = db.transaction(STORE_NAME, 'readonly');
+        const tx = db.transaction(STORE_NAME, 'readonly');
         const store = tx.objectStore(STORE_NAME);
-        const req   = store.getAllKeys();
-        req.onerror   = () => reject(req.error);
+        const req = store.getAllKeys();
+        req.onerror = () => reject(req.error);
         req.onsuccess = () => resolve(req.result);
     });
 }
@@ -77,10 +77,10 @@ async function dbKeys() {
 async function dbGetAll() {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-        const tx    = db.transaction(STORE_NAME, 'readonly');
+        const tx = db.transaction(STORE_NAME, 'readonly');
         const store = tx.objectStore(STORE_NAME);
-        const req   = store.getAll();
-        req.onerror   = () => reject(req.error);
+        const req = store.getAll();
+        req.onerror = () => reject(req.error);
         req.onsuccess = () => resolve(req.result);
     });
 }
@@ -113,7 +113,7 @@ function generatePassword() {
 }
 
 async function deriveKey(password, salt) {
-    const enc         = new TextEncoder();
+    const enc = new TextEncoder();
     const keyMaterial = await crypto.subtle.importKey(
         "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveBits", "deriveKey"]
     );
@@ -126,13 +126,13 @@ async function deriveKey(password, salt) {
 async function encryptData(data, password) {
     const enc = new TextEncoder();
     let buffer;
-    if      (typeof data === 'string')      buffer = enc.encode(data);
-    else if (data instanceof ArrayBuffer)   buffer = new Uint8Array(data);
-    else                                    buffer = data;
+    if (typeof data === 'string') buffer = enc.encode(data);
+    else if (data instanceof ArrayBuffer) buffer = new Uint8Array(data);
+    else buffer = data;
 
-    const salt       = crypto.getRandomValues(new Uint8Array(16));
-    const iv         = crypto.getRandomValues(new Uint8Array(12));
-    const key        = await deriveKey(password, salt);
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await deriveKey(password, salt);
     const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, buffer);
 
     const bundle = new Uint8Array(salt.length + iv.length + ciphertext.byteLength);
@@ -150,11 +150,11 @@ async function decryptData(bundleData, password, returnAsText = true) {
         } else {
             bundle = new Uint8Array(bundleData);
         }
-        const salt       = bundle.slice(0, 16);
-        const iv         = bundle.slice(16, 28);
+        const salt = bundle.slice(0, 16);
+        const iv = bundle.slice(16, 28);
         const ciphertext = bundle.slice(28);
-        const key        = await deriveKey(password, salt);
-        const decrypted  = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+        const key = await deriveKey(password, salt);
+        const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
         return returnAsText ? new TextDecoder().decode(decrypted) : decrypted;
     } catch { return null; }
 }
@@ -163,7 +163,7 @@ async function decryptData(bundleData, password, returnAsText = true) {
 // GLOBAL VAULT STATS (for sidebar + dashboard)
 // ============================================================
 async function getVaultSummary() {
-    const keys  = await dbKeys();
+    const keys = await dbKeys();
     const items = await dbGetAll();
     let totalBytes = 0;
 
@@ -171,22 +171,22 @@ async function getVaultSummary() {
         const k = keys[i];
         if (!k || !k.startsWith('TS64_STASH_')) continue;
         const item = items[i];
-        if (typeof item === 'string')  totalBytes += item.length;
+        if (typeof item === 'string') totalBytes += item.length;
         else if (item && item.byteLength) totalBytes += item.byteLength;
     }
 
     const stashKeys = keys.filter(k => k && k.startsWith('TS64_STASH_'));
-    const stats     = await getStats();
+    const stats = await getStats();
 
     return {
-        totalStashes : stashKeys.length,
-        textCount    : stats.text  || 0,
-        audioCount   : stats.audio || 0,
-        videoCount   : stats.video || 0,
+        totalStashes: stashKeys.length,
+        textCount: stats.text || 0,
+        audioCount: stats.audio || 0,
+        videoCount: stats.video || 0,
         totalBytes,
-        totalKB      : (totalBytes / 1024).toFixed(1),
-        totalMB      : (totalBytes / (1024 * 1024)).toFixed(2),
-        percentage   : Math.min(100, (totalBytes / (50 * 1024 * 1024)) * 100).toFixed(2),
+        totalKB: (totalBytes / 1024).toFixed(1),
+        totalMB: (totalBytes / (1024 * 1024)).toFixed(2),
+        percentage: Math.min(100, (totalBytes / (50 * 1024 * 1024)) * 100).toFixed(2),
     };
 }
 
@@ -196,13 +196,13 @@ async function getVaultSummary() {
 async function renderSidebar() {
     const summary = await getVaultSummary();
     const barFill = Math.floor((parseFloat(summary.percentage) / 100) * 18);
-    const barStr  = '█'.repeat(barFill) + '░'.repeat(18 - barFill);
+    const barStr = '█'.repeat(barFill) + '░'.repeat(18 - barFill);
 
     const folders = [
-        { icon: 'folder', label: '/text_stash',  count: summary.textCount,  tab: 'terminal' },
-        { icon: 'folder', label: '/audio_stash', count: summary.audioCount, tab: 'audio'    },
-        { icon: 'folder', label: '/video_stash', count: summary.videoCount, tab: 'video'    },
-        { icon: 'folder', label: '/etc',         count: null,               tab: 'help'     },
+        { icon: 'folder', label: '/text_stash', count: summary.textCount, tab: 'terminal' },
+        { icon: 'folder', label: '/audio_stash', count: summary.audioCount, tab: 'audio' },
+        { icon: 'folder', label: '/video_stash', count: summary.videoCount, tab: 'video' },
+        { icon: 'folder', label: '/etc', count: null, tab: 'help' },
     ];
 
     const folderHtml = folders.map(f => `
@@ -233,18 +233,18 @@ async function renderSidebar() {
 
     // Update memory bar in footer instead of CPU
     const globalCpu = document.getElementById('global-cpu');
-    const cpuBar    = document.getElementById('cpu-bar');
-    const cpuLabel  = document.getElementById('cpu-label');
+    const cpuBar = document.getElementById('cpu-bar');
+    const cpuLabel = document.getElementById('cpu-label');
     if (globalCpu) globalCpu.textContent = summary.totalMB + ' MB';
-    if (cpuBar)    cpuBar.style.width    = summary.percentage + '%';
-    if (cpuLabel)  cpuLabel.textContent  = 'VAULT MEMORY';
+    if (cpuBar) cpuBar.style.width = summary.percentage + '%';
+    if (cpuLabel) cpuLabel.textContent = 'VAULT MEMORY';
 }
 
 // ============================================================
 // UI BOOTSTRAP
 // ============================================================
 const mainNavLinks = document.querySelectorAll('#main-nav .nav-link');
-const mainContent  = document.getElementById('main-content');
+const mainContent = document.getElementById('main-content');
 const rightSidebar = document.getElementById('right-sidebar');
 
 // Patch sidebar label to say VAULT MEMORY
@@ -270,7 +270,7 @@ mainNavLinks.forEach(link => {
 // ============================================================
 function switchTab(tab) {
     state.activeTab = tab;
-    mainContent.innerHTML  = '';
+    mainContent.innerHTML = '';
     rightSidebar.innerHTML = '';
     rightSidebar.style.display = 'flex';
 
@@ -281,14 +281,14 @@ function switchTab(tab) {
 
     switch (tab) {
         case 'dashboard': renderDashboardTab(); break;
-        case 'audio':     renderAudioTab();     break;
-        case 'video':     renderVideoTab();     break;
+        case 'audio': renderAudioTab(); break;
+        case 'video': renderVideoTab(); break;
         case 'terminal':
             renderTerminalTab();
             rightSidebar.style.display = 'none';
             break;
-        case 'help':      renderHelpTab();      break;
-        default:          renderTerminalTab();  rightSidebar.style.display = 'none';
+        case 'help': renderHelpTab(); break;
+        default: renderTerminalTab(); rightSidebar.style.display = 'none';
     }
 
     renderSidebar();
@@ -315,9 +315,9 @@ function buildDropZone(containerId, accept, labelText) {
     const zone = document.getElementById(containerId);
     if (!zone) return;
 
-    zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('border-white'); });
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('border-white'); });
     zone.addEventListener('dragleave', e => { zone.classList.remove('border-white'); });
-    zone.addEventListener('drop',      async (e) => {
+    zone.addEventListener('drop', async (e) => {
         e.preventDefault();
         zone.classList.remove('border-white');
         const file = e.dataTransfer.files[0];
@@ -343,7 +343,8 @@ async function handleMediaFile(file, resultContainerId, expectedType) {
 
     // Handle backup restore
     if (isBackup) {
-        const id = file.name.split('_')[1]?.split('.')[0];
+        const nameParts = file.name.split('.')[0].split('_');
+        const id = nameParts[nameParts.length - 1];
         if (!id) { if (container) container.innerHTML = `<div class="text-red-500 text-sm p-4">ERROR: Malformed backup filename.</div>`; return; }
         const buf = await file.arrayBuffer();
         await dbSet('TS64_STASH_' + id, new Uint8Array(buf));
@@ -361,10 +362,10 @@ async function handleMediaFile(file, resultContainerId, expectedType) {
     if (container) container.innerHTML = `<div class="text-zinc-500 animate-pulse text-sm p-4">Encrypting ${(file.size / 1024).toFixed(1)} KB... please wait</div>`;
 
     const pwd = generatePassword();
-    const id  = pwd.split('-')[1];
+    const id = pwd.split('-')[1];
 
     try {
-        const arrayBuffer     = await file.arrayBuffer();
+        const arrayBuffer = await file.arrayBuffer();
         const encryptedBuffer = await encryptData(arrayBuffer, pwd);
 
         if (isAudio) {
@@ -374,7 +375,7 @@ async function handleMediaFile(file, resultContainerId, expectedType) {
                 <div class="p-4 border border-white/20 bg-black/40 text-sm space-y-2">
                     <div class="font-bold text-white tracking-widest border-b border-white/10 pb-2 mb-3">AUDIO ENCRYPTED & STORED</div>
                     <div class="text-zinc-400">File: <span class="text-white">${file.name}</span></div>
-                    <div class="text-zinc-400">Size: <span class="text-white">${(file.size/1024).toFixed(1)} KB</span></div>
+                    <div class="text-zinc-400">Size: <span class="text-white">${(file.size / 1024).toFixed(1)} KB</span></div>
                     <div class="text-zinc-400">Engine: <span class="text-white">AES-GCM 256-bit</span></div>
                     <div class="text-zinc-400">Storage: <span class="text-white">IndexedDB Local Vault</span></div>
                     ${keyCardHTML(pwd)}
@@ -383,9 +384,9 @@ async function handleMediaFile(file, resultContainerId, expectedType) {
         } else if (isVideo) {
             // Video — download as encrypted file
             const blob = new Blob([encryptedBuffer], { type: 'application/octet-stream' });
-            const url  = URL.createObjectURL(blob);
-            const a    = document.createElement('a');
-            a.href     = url;
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
             a.download = `classified_footage_${id}.ts64vid`;
             document.body.appendChild(a);
             a.click();
@@ -418,7 +419,7 @@ async function renderDashboardTab() {
 
     const summary = await getVaultSummary();
     const barFill = Math.floor((parseFloat(summary.percentage) / 100) * 30);
-    const barStr  = '█'.repeat(barFill) + '░'.repeat(30 - barFill);
+    const barStr = '█'.repeat(barFill) + '░'.repeat(30 - barFill);
 
     mainContent.innerHTML = `
     <div class="p-6 md:p-8 space-y-8">
@@ -595,14 +596,14 @@ function renderAudioTab() {
         </div>`;
 }
 
-window.handleAudioDrop = async function(e) {
+window.handleAudioDrop = async function (e) {
     const file = e.dataTransfer?.files?.[0];
     if (!file) return;
     await handleMediaFile(file, 'audio-result', 'audio');
     renderSidebar();
 };
 
-window.handleAudioInputChange = async function(e) {
+window.handleAudioInputChange = async function (e) {
     const file = e.target.files?.[0];
     if (!file) return;
     await handleMediaFile(file, 'audio-result', 'audio');
@@ -648,7 +649,14 @@ function renderVideoTab() {
                  ondragover="event.preventDefault(); this.classList.add('border-white/40');"
                  ondragleave="this.classList.remove('border-white/40');"
                  ondrop="event.preventDefault(); this.classList.remove('border-white/40'); handleVideoRestoreDrop(event);">
-                DROP .ts64vid FILE HERE TO RESTORE
+                <div class="mb-3">DROP .ts64vid FILE HERE TO RESTORE</div>
+                <div class="text-zinc-600 text-xs mb-3">— or —</div>
+                <button onclick="document.getElementById('video-restore-file-input').click()"
+                    class="bg-white text-black font-bold px-6 py-2 text-xs uppercase tracking-widest hover:bg-zinc-300 transition-colors">
+                    SELECT FILE
+                </button>
+                <input type="file" id="video-restore-file-input" accept=".ts64,.ts64vid" class="hidden"
+                    onchange="handleVideoRestoreInputChange(event)" />
             </div>
             <div id="video-restore-result" class="mt-3"></div>
         </div>
@@ -684,7 +692,7 @@ function renderVideoTab() {
         </div>`;
 }
 
-window.handleVideoDrop = async function(e) {
+window.handleVideoDrop = async function (e) {
     const file = e.dataTransfer?.files?.[0];
     if (!file) return;
     if (file.name.toLowerCase().endsWith('.ts64vid') || file.name.toLowerCase().endsWith('.ts64')) {
@@ -695,15 +703,25 @@ window.handleVideoDrop = async function(e) {
     renderSidebar();
 };
 
-window.handleVideoInputChange = async function(e) {
+window.handleVideoInputChange = async function (e) {
     const file = e.target.files?.[0];
     if (!file) return;
     await handleMediaFile(file, 'video-result', 'video');
     renderSidebar();
 };
 
-window.handleVideoRestoreDrop = async function(e) {
+window.handleVideoRestoreDrop = async function (e) {
     const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.ts64vid') && !file.name.toLowerCase().endsWith('.ts64')) {
+        document.getElementById('video-restore-result').innerHTML = `<div class="text-red-500 text-xs p-2">Error: Expected a .ts64 or .ts64vid file.</div>`;
+        return;
+    }
+    await handleMediaFile(file, 'video-restore-result', 'backup');
+};
+
+window.handleVideoRestoreInputChange = async function (e) {
+    const file = e.target.files?.[0];
     if (!file) return;
     if (!file.name.toLowerCase().endsWith('.ts64vid') && !file.name.toLowerCase().endsWith('.ts64')) {
         document.getElementById('video-restore-result').innerHTML = `<div class="text-red-500 text-xs p-2">Error: Expected a .ts64 or .ts64vid file.</div>`;
@@ -724,17 +742,17 @@ function renderHelpTab() {
                 <h3 class="text-white font-bold mb-3 tracking-wider">TERMINAL COMMANDS</h3>
                 <div class="space-y-3">
                     ${[
-                        ['encode {string}',   'Maps English characters to Binary blocks (UTF-8 → 64-bit blocks).'],
-                        ['decode {binary}',   'Reverses space-separated binary blocks into English text.'],
-                        ['stash {string}',    'Encrypts text payload with AES-GCM 256 and stores in local IndexedDB vault.'],
-                        ['unlock {key}',      'Decrypts a stash — works for text, audio, and video payloads.'],
-                        ['export {key}',      'Downloads your encrypted stash as a portable .ts64 backup file.'],
-                        ['stash_audio',       'Opens a file picker to encrypt an audio file into the local vault.'],
-                        ['stash_video',       'Opens a file picker to encrypt a video file — auto-downloads as .ts64vid.'],
-                        ['purge',             'Permanently wipes all TS64 encrypted data from the vault.'],
-                        ['status',            'Displays vault diagnostics: stash count, size, utilization.'],
-                        ['clear',             'Clears terminal output history.'],
-                    ].map(([cmd, desc]) => `
+            ['encode {string}', 'Maps English characters to Binary blocks (UTF-8 → 64-bit blocks).'],
+            ['decode {binary}', 'Reverses space-separated binary blocks into English text.'],
+            ['stash {string}', 'Encrypts text payload with AES-GCM 256 and stores in local IndexedDB vault.'],
+            ['unlock {key}', 'Decrypts a stash — works for text, audio, and video payloads.'],
+            ['export {key}', 'Downloads your encrypted stash as a portable .ts64 backup file.'],
+            ['stash_audio', 'Opens a file picker to encrypt an audio file into the local vault.'],
+            ['stash_video', 'Opens a file picker to encrypt a video file — auto-downloads as .ts64vid.'],
+            ['purge', 'Permanently wipes all TS64 encrypted data from the vault.'],
+            ['status', 'Displays vault diagnostics: stash count, size, utilization.'],
+            ['clear', 'Clears terminal output history.'],
+        ].map(([cmd, desc]) => `
                         <div class="bg-white/5 border border-white/10 p-3">
                             <code class="text-white block mb-1 text-xs">${cmd}</code>
                             <p class="text-xs text-zinc-500">${desc}</p>
@@ -792,10 +810,10 @@ function renderTerminalTab() {
 // TERMINAL ENGINE
 // ============================================================
 function initTerminalEngine() {
-    const inputEl         = document.getElementById('cli-input');
-    const formEl          = document.getElementById('cli-form');
+    const inputEl = document.getElementById('cli-input');
+    const formEl = document.getElementById('cli-form');
     const outputContainer = document.getElementById('output-container');
-    const mainEl          = document.getElementById('main-content');
+    const mainEl = document.getElementById('main-content');
 
     if (!inputEl || !formEl) return;
 
@@ -803,36 +821,36 @@ function initTerminalEngine() {
         if (window.getSelection().toString() === '') inputEl.focus();
     });
 
-    const cursorEl   = document.getElementById('cli-cursor');
-    const inputMock  = document.createElement('div');
+    const cursorEl = document.getElementById('cli-cursor');
+    const inputMock = document.createElement('div');
     inputMock.className = "w-full pointer-events-none break-all font-mono text-lg pt-1 invisible absolute top-0 left-0";
     formEl.insertBefore(inputMock, inputEl);
-    inputEl.style.color      = 'transparent';
+    inputEl.style.color = 'transparent';
     inputEl.style.caretColor = 'transparent';
     if (cursorEl) cursorEl.remove();
 
     function updateInputUI() {
         inputEl.style.height = 'auto';
         inputEl.style.height = inputEl.scrollHeight + 'px';
-        const text       = inputEl.value;
-        const index      = inputEl.selectionStart;
-        const before     = text.substring(0, index);
-        const atCursor   = text.substring(index, index + 1) || '&nbsp;';
-        const after      = text.substring(index + 1);
-        inputMock.innerHTML = `<span class="text-white whitespace-pre-wrap leading-relaxed">${before.replace(/</g,'&lt;')}</span><span class="bg-white text-black opacity-80 animate-pulse border-b-2 border-white inline-block whitespace-pre-wrap leading-relaxed ${atCursor===' '||atCursor==='&nbsp;'?'w-2 h-5 align-middle':''}">${atCursor==='&nbsp;'?'':atCursor.replace(/</g,'&lt;')}</span><span class="text-white whitespace-pre-wrap leading-relaxed">${after.replace(/</g,'&lt;')}</span>`;
+        const text = inputEl.value;
+        const index = inputEl.selectionStart;
+        const before = text.substring(0, index);
+        const atCursor = text.substring(index, index + 1) || '&nbsp;';
+        const after = text.substring(index + 1);
+        inputMock.innerHTML = `<span class="text-white whitespace-pre-wrap leading-relaxed">${before.replace(/</g, '&lt;')}</span><span class="bg-white text-black opacity-80 animate-pulse border-b-2 border-white inline-block whitespace-pre-wrap leading-relaxed ${atCursor === ' ' || atCursor === '&nbsp;' ? 'w-2 h-5 align-middle' : ''}">${atCursor === '&nbsp;' ? '' : atCursor.replace(/</g, '&lt;')}</span><span class="text-white whitespace-pre-wrap leading-relaxed">${after.replace(/</g, '&lt;')}</span>`;
         inputMock.classList.remove('invisible');
         inputMock.style.visibility = 'visible';
     }
 
-    inputEl.addEventListener('input',  updateInputUI);
-    inputEl.addEventListener('keyup',  updateInputUI);
-    inputEl.addEventListener('click',  updateInputUI);
+    inputEl.addEventListener('input', updateInputUI);
+    inputEl.addEventListener('keyup', updateInputUI);
+    inputEl.addEventListener('click', updateInputUI);
     requestAnimationFrame(updateInputUI);
 
     inputEl.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); formEl.dispatchEvent(new Event('submit')); }
-        else if (e.key === 'PageUp')   { e.preventDefault(); mainEl.scrollBy({ top: -mainEl.clientHeight * 0.8, behavior: 'smooth' }); }
-        else if (e.key === 'PageDown') { e.preventDefault(); mainEl.scrollBy({ top:  mainEl.clientHeight * 0.8, behavior: 'smooth' }); }
+        else if (e.key === 'PageUp') { e.preventDefault(); mainEl.scrollBy({ top: -mainEl.clientHeight * 0.8, behavior: 'smooth' }); }
+        else if (e.key === 'PageDown') { e.preventDefault(); mainEl.scrollBy({ top: mainEl.clientHeight * 0.8, behavior: 'smooth' }); }
     });
 
     // ---- Encoding helpers ----
@@ -851,7 +869,7 @@ function initTerminalEngine() {
             const bin = blocksArray.join('');
             if (!bin || bin.length % 8 !== 0) throw new Error("Invalid length");
             const bytes = new Uint8Array(bin.length / 8);
-            for (let i = 0; i < bin.length; i += 8) bytes[i/8] = parseInt(bin.substring(i, i+8), 2);
+            for (let i = 0; i < bin.length; i += 8) bytes[i / 8] = parseInt(bin.substring(i, i + 8), 2);
             return new TextDecoder().decode(bytes);
         } catch { return null; }
     }
@@ -860,7 +878,7 @@ function initTerminalEngine() {
     async function renderStorageStatsInline() {
         const summary = await getVaultSummary();
         const barFill = Math.floor((parseFloat(summary.percentage) / 100) * 30);
-        const barStr  = '█'.repeat(barFill) + '░'.repeat(30 - barFill);
+        const barStr = '█'.repeat(barFill) + '░'.repeat(30 - barFill);
         return `
         <div class="border border-white/20 pl-4 mb-6 space-y-4 pt-4 pr-4 bg-black/40">
             <div class="flex justify-between items-end border-b border-white/20 pb-2">
@@ -901,14 +919,14 @@ function initTerminalEngine() {
         myCmdWrap.innerHTML = `
             <div class="flex items-center gap-3">
                 <span class="text-white font-bold">tetrascript64@system:~$</span>
-                <span class="text-zinc-300">${cmdText.replace(/</g,'&lt;')}</span>
+                <span class="text-zinc-300">${cmdText.replace(/</g, '&lt;')}</span>
             </div>`;
         outputContainer.appendChild(myCmdWrap);
 
-        const parts   = cmdText.split(/[\s\u200B\uFEFF]+/).filter(Boolean);
+        const parts = cmdText.split(/[\s\u200B\uFEFF]+/).filter(Boolean);
         const command = parts[0]?.toLowerCase() || '';
         const firstWordEnd = cmdText.search(/[\s\u200B\uFEFF]/);
-        const args    = firstWordEnd === -1 ? '' : cmdText.substring(firstWordEnd).replace(/^[\s\u200B\uFEFF]+/, '');
+        const args = firstWordEnd === -1 ? '' : cmdText.substring(firstWordEnd).replace(/^[\s\u200B\uFEFF]+/, '');
 
         const resWrap = document.createElement('div');
         resWrap.className = 'mt-2 mb-4 border-l pl-4 py-2 border-white/10 text-sm';
@@ -922,24 +940,24 @@ function initTerminalEngine() {
             resWrap.innerHTML = `
                 <div class="text-zinc-400 space-y-1 text-xs">
                     ${[
-                        ['encode {string}', 'Encode text to binary blocks'],
-                        ['decode {binary}', 'Decode binary blocks to text'],
-                        ['stash {string}',  'Encrypt and store text in vault'],
-                        ['unlock {key}',    'Decrypt stash (text, audio, or video)'],
-                        ['export {key}',    'Download encrypted backup (.ts64)'],
-                        ['stash_audio',     'Encrypt an audio file into vault'],
-                        ['stash_video',     'Encrypt a video file (downloads as .ts64vid)'],
-                        ['purge',           'Wipe all encrypted data from vault'],
-                        ['status',          'Show vault diagnostics'],
-                        ['clear',           'Clear terminal output'],
-                    ].map(([c, d]) => `<p><span class="text-white font-bold">${c}</span> — ${d}</p>`).join('')}
+                    ['encode {string}', 'Encode text to binary blocks'],
+                    ['decode {binary}', 'Decode binary blocks to text'],
+                    ['stash {string}', 'Encrypt and store text in vault'],
+                    ['unlock {key}', 'Decrypt stash (text, audio, or video)'],
+                    ['export {key}', 'Download encrypted backup (.ts64)'],
+                    ['stash_audio', 'Encrypt an audio file into vault'],
+                    ['stash_video', 'Encrypt a video file (downloads as .ts64vid)'],
+                    ['purge', 'Wipe all encrypted data from vault'],
+                    ['status', 'Show vault diagnostics'],
+                    ['clear', 'Clear terminal output'],
+                ].map(([c, d]) => `<p><span class="text-white font-bold">${c}</span> — ${d}</p>`).join('')}
                 </div>`;
 
         } else if (command === 'encode') {
             if (!args) {
                 resWrap.innerHTML = `<span class="text-red-500">Error: Missing input string</span>`;
             } else {
-                const blocks       = encodeTextToBinaryBlocks(args);
+                const blocks = encodeTextToBinaryBlocks(args);
                 const encodedPhrase = blocks.join(' ');
                 resWrap.innerHTML = `
                     <div class="font-bold text-white mb-3 tracking-wider border-b border-white/10 pb-2">ENCODING SEQUENCE</div>
@@ -954,7 +972,7 @@ function initTerminalEngine() {
             if (!args) {
                 resWrap.innerHTML = `<span class="text-red-500">Error: Missing binary blocks</span>`;
             } else {
-                const bins  = args.trim().split(/[\s\u200B\uFEFF]+/);
+                const bins = args.trim().split(/[\s\u200B\uFEFF]+/);
                 const result = decodeBinaryBlocksToText(bins);
                 if (result === null) {
                     resWrap.innerHTML = `<span class="text-red-500">Error: Invalid binary sequence</span>`;
@@ -964,7 +982,7 @@ function initTerminalEngine() {
                         <div class="text-sm text-zinc-500 mb-4">Sequence: <span class="text-white">${bins.length} BLOCKS</span></div>
                         <div class="mt-4 p-5 border border-white/20 bg-white/5 text-white font-mono text-base tracking-wide flex gap-3 items-start">
                             <span class="shrink-0">></span>
-                            <span class="whitespace-pre-wrap break-words leading-relaxed">${result.replace(/</g,'&lt;')}</span>
+                            <span class="whitespace-pre-wrap break-words leading-relaxed">${result.replace(/</g, '&lt;')}</span>
                         </div>`;
                 }
             }
@@ -980,8 +998,8 @@ function initTerminalEngine() {
                     resWrap.innerHTML = `<span class="text-red-500">Error: Could not encode payload.</span>`;
                 } else {
                     const payload = binBlocks.join(' ');
-                    const pwd     = generatePassword();
-                    const id      = pwd.split('-')[1];
+                    const pwd = generatePassword();
+                    const id = pwd.split('-')[1];
                     try {
                         const encrypted = await encryptData(payload, pwd);
                         await dbSet('TS64_STASH_' + id, encrypted);
@@ -999,24 +1017,24 @@ function initTerminalEngine() {
             }
 
         } else if (command === 'stash_audio') {
-            const btnId     = 'btn-audio-' + Date.now();
+            const btnId = 'btn-audio-' + Date.now();
             resWrap.innerHTML = `
                 <div class="text-zinc-500 mb-3">Select an audio file to encrypt (.mp3, .wav, .ogg...)</div>
                 <button id="${btnId}" class="bg-white text-black font-bold px-4 py-2 text-xs uppercase tracking-widest hover:bg-zinc-300 transition-colors">SELECT AUDIO FILE</button>`;
             outputContainer.appendChild(resWrap);
 
-            const fileInput  = document.createElement('input');
-            fileInput.type   = 'file';
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
             fileInput.accept = 'audio/*,.mp3,.wav,.ogg,.flac,.aac,.m4a';
             fileInput.onchange = async (ev) => {
                 const file = ev.target.files[0];
                 if (!file) { resWrap.innerHTML = `<span class="text-red-500">No file selected.</span>`; return; }
-                resWrap.innerHTML = `<div class="text-zinc-500 animate-pulse">Encrypting ${(file.size/1024).toFixed(1)} KB...</div>`;
+                resWrap.innerHTML = `<div class="text-zinc-500 animate-pulse">Encrypting ${(file.size / 1024).toFixed(1)} KB...</div>`;
                 const pwd = generatePassword();
-                const id  = pwd.split('-')[1];
+                const id = pwd.split('-')[1];
                 try {
-                    const ab       = await file.arrayBuffer();
-                    const enc      = await encryptData(ab, pwd);
+                    const ab = await file.arrayBuffer();
+                    const enc = await encryptData(ab, pwd);
                     await dbSet('TS64_STASH_' + id, enc);
                     await incrementStat('audio');
                     resWrap.innerHTML = `
@@ -1033,28 +1051,28 @@ function initTerminalEngine() {
             return;
 
         } else if (command === 'stash_video') {
-            const btnId     = 'btn-video-' + Date.now();
+            const btnId = 'btn-video-' + Date.now();
             resWrap.innerHTML = `
                 <div class="text-zinc-500 mb-3">Select a video file to encrypt (.mp4, .webm...)</div>
                 <button id="${btnId}" class="bg-white text-black font-bold px-4 py-2 text-xs uppercase tracking-widest hover:bg-zinc-300 transition-colors">SELECT VIDEO FILE</button>`;
             outputContainer.appendChild(resWrap);
 
-            const fileInput  = document.createElement('input');
-            fileInput.type   = 'file';
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
             fileInput.accept = 'video/*,.mp4,.webm,.mov,.mkv,.avi';
             fileInput.onchange = async (ev) => {
                 const file = ev.target.files[0];
                 if (!file) { resWrap.innerHTML = `<span class="text-red-500">No file selected.</span>`; return; }
-                resWrap.innerHTML = `<div class="text-zinc-500 animate-pulse">Encrypting ${(file.size/(1024*1024)).toFixed(2)} MB... (large files may take a moment)</div>`;
+                resWrap.innerHTML = `<div class="text-zinc-500 animate-pulse">Encrypting ${(file.size / (1024 * 1024)).toFixed(2)} MB... (large files may take a moment)</div>`;
                 const pwd = generatePassword();
-                const id  = pwd.split('-')[1];
+                const id = pwd.split('-')[1];
                 try {
-                    const ab    = await file.arrayBuffer();
-                    const enc   = await encryptData(ab, pwd);
-                    const blob  = new Blob([enc], { type: 'application/octet-stream' });
-                    const url   = URL.createObjectURL(blob);
-                    const a     = document.createElement('a');
-                    a.href      = url; a.download = `classified_footage_${id}.ts64vid`;
+                    const ab = await file.arrayBuffer();
+                    const enc = await encryptData(ab, pwd);
+                    const blob = new Blob([enc], { type: 'application/octet-stream' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url; a.download = `classified_footage_${id}.ts64vid`;
                     document.body.appendChild(a); a.click(); document.body.removeChild(a);
                     URL.revokeObjectURL(url);
                     await incrementStat('video');
@@ -1077,13 +1095,13 @@ function initTerminalEngine() {
             } else {
                 resWrap.innerHTML = `<div class="text-zinc-500 animate-pulse">Decrypting payload...</div>`;
                 outputContainer.appendChild(resWrap);
-                const pwd   = args.trim().toUpperCase();
+                const pwd = args.trim().toUpperCase();
                 const parts = pwd.split('-');
                 if (parts.length !== 3 || parts[0] !== 'TS64') {
                     resWrap.innerHTML = `<span class="text-red-500">Access Denied: Invalid key format. Expected TS64-XXXX-XXXX</span>`;
                 } else {
-                    const id       = parts[1];
-                    const payload  = await dbGet('TS64_STASH_' + id);
+                    const id = parts[1];
+                    const payload = await dbGet('TS64_STASH_' + id);
                     if (!payload) {
                         resWrap.innerHTML = `<span class="text-red-500">Access Denied: No data found for key ${id}.</span>`;
                     } else {
@@ -1092,10 +1110,10 @@ function initTerminalEngine() {
                             resWrap.innerHTML = `<span class="text-red-500 p-2 block border border-red-500/50 bg-red-500/10">Access Denied: Incorrect key or corrupted payload.</span>`;
                         } else {
                             try {
-                                const textStr  = new TextDecoder("utf-8", { fatal: true }).decode(decrypted);
-                                const isText   = /^[01 ]+$/.test(textStr.trim());
+                                const textStr = new TextDecoder("utf-8", { fatal: true }).decode(decrypted);
+                                const isText = /^[01 ]+$/.test(textStr.trim());
                                 if (isText) {
-                                    const bins         = textStr.trim().split(/\s+/);
+                                    const bins = textStr.trim().split(/\s+/);
                                     const englishPhrase = decodeBinaryBlocksToText(bins);
                                     if (!englishPhrase) throw new Error("Binary parse error");
                                     resWrap.innerHTML = `
@@ -1103,7 +1121,7 @@ function initTerminalEngine() {
                                         <div class="text-sm text-zinc-500 mb-4">${bins.length} blocks decoded</div>
                                         <div class="mt-4 p-5 border border-white/20 bg-white/5 text-white font-mono text-base tracking-wide flex gap-3 items-start">
                                             <span class="shrink-0">></span>
-                                            <span class="whitespace-pre-wrap break-words leading-relaxed">${englishPhrase.replace(/</g,'&lt;')}</span>
+                                            <span class="whitespace-pre-wrap break-words leading-relaxed">${englishPhrase.replace(/</g, '&lt;')}</span>
                                         </div>`;
                                 } else {
                                     throw new Error("Not binary text");
@@ -1111,7 +1129,7 @@ function initTerminalEngine() {
                             } catch {
                                 // Try as media
                                 const blob = new Blob([decrypted]);
-                                const url  = URL.createObjectURL(blob);
+                                const url = URL.createObjectURL(blob);
                                 // Try audio first, then video
                                 const testAudio = new Audio(url);
                                 testAudio.oncanplay = () => {
@@ -1140,16 +1158,16 @@ function initTerminalEngine() {
             if (!args) {
                 resWrap.innerHTML = `<span class="text-red-500">Error: Missing password key</span>`;
             } else {
-                const pwd  = args.trim().toUpperCase();
-                const id   = pwd.split('-')[1];
+                const pwd = args.trim().toUpperCase();
+                const id = pwd.split('-')[1];
                 const data = await dbGet('TS64_STASH_' + id);
                 if (!data) {
                     resWrap.innerHTML = `<span class="text-red-500">Export Failed: No stash found for key ${id}.</span>`;
                 } else {
                     const blob = new Blob([data], { type: 'application/octet-stream' });
-                    const url  = URL.createObjectURL(blob);
-                    const a    = document.createElement('a');
-                    a.href     = url; a.download = `backup_${id}.ts64`;
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url; a.download = `backup_${id}.ts64`;
                     document.body.appendChild(a); a.click(); document.body.removeChild(a);
                     URL.revokeObjectURL(url);
                     resWrap.innerHTML = `<div class="text-white font-bold mb-2">BACKUP EXPORTED: backup_${id}.ts64</div><div class="text-zinc-500 text-xs">Drag this file back into the site to restore.</div>`;
@@ -1158,7 +1176,7 @@ function initTerminalEngine() {
 
         } else if (command === 'purge') {
             const keys = await dbKeys();
-            let wiped  = 0;
+            let wiped = 0;
             for (let key of keys) {
                 if (key && key.startsWith('TS64_STASH_')) { await dbRemove(key); wiped++; }
             }
@@ -1191,9 +1209,9 @@ function initTerminalEngine() {
         if (!file) return;
 
         const lowerName = file.name.toLowerCase();
-        const isBackup  = lowerName.endsWith('.ts64') || lowerName.endsWith('.ts64vid');
-        const isAudio   = file.type.startsWith('audio/') || ['.mp3','.wav','.ogg','.flac','.aac'].some(x => lowerName.endsWith(x));
-        const isVideo   = file.type.startsWith('video/') || ['.mp4','.webm','.mkv','.mov','.avi'].some(x => lowerName.endsWith(x));
+        const isBackup = lowerName.endsWith('.ts64') || lowerName.endsWith('.ts64vid');
+        const isAudio = file.type.startsWith('audio/') || ['.mp3', '.wav', '.ogg', '.flac', '.aac'].some(x => lowerName.endsWith(x));
+        const isVideo = file.type.startsWith('video/') || ['.mp4', '.webm', '.mkv', '.mov', '.avi'].some(x => lowerName.endsWith(x));
 
         const wrp = document.createElement('div');
         wrp.className = 'mt-2 mb-4 border-l border-white/20 pl-4 py-2 text-sm';
@@ -1201,17 +1219,17 @@ function initTerminalEngine() {
         outputContainer.appendChild(wrp);
 
         if (isBackup) {
-            const id  = file.name.split('_')[1]?.split('.')[0];
-            if (!id)  { wrp.innerHTML = `<span class="text-red-500">Malformed backup filename.</span>`; return; }
+            const id = file.name.split('_')[1]?.split('.')[0];
+            if (!id) { wrp.innerHTML = `<span class="text-red-500">Malformed backup filename.</span>`; return; }
             const buf = await file.arrayBuffer();
             await dbSet('TS64_STASH_' + id, new Uint8Array(buf));
             wrp.innerHTML = `<div class="font-bold text-white mb-2">BACKUP RESTORED</div><div class="text-zinc-500">Key: ${id}</div>`;
         } else if (isAudio) {
             wrp.innerHTML = `<div class="text-zinc-500 animate-pulse">Encrypting audio: ${file.name}...</div>`;
             const pwd = generatePassword();
-            const id  = pwd.split('-')[1];
+            const id = pwd.split('-')[1];
             try {
-                const ab  = await file.arrayBuffer();
+                const ab = await file.arrayBuffer();
                 const enc = await encryptData(ab, pwd);
                 await dbSet('TS64_STASH_' + id, enc);
                 await incrementStat('audio');
@@ -1224,14 +1242,14 @@ function initTerminalEngine() {
         } else if (isVideo) {
             wrp.innerHTML = `<div class="text-zinc-500 animate-pulse">Encrypting video: ${file.name}...</div>`;
             const pwd = generatePassword();
-            const id  = pwd.split('-')[1];
+            const id = pwd.split('-')[1];
             try {
-                const ab   = await file.arrayBuffer();
-                const enc  = await encryptData(ab, pwd);
+                const ab = await file.arrayBuffer();
+                const enc = await encryptData(ab, pwd);
                 const blob = new Blob([enc], { type: 'application/octet-stream' });
-                const url  = URL.createObjectURL(blob);
-                const a    = document.createElement('a');
-                a.href     = url; a.download = `classified_footage_${id}.ts64vid`;
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `classified_footage_${id}.ts64vid`;
                 document.body.appendChild(a); a.click(); document.body.removeChild(a);
                 URL.revokeObjectURL(url);
                 await incrementStat('video');
