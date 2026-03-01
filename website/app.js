@@ -160,6 +160,102 @@ async function decryptData(bundleData, password, returnAsText = true) {
 }
 
 // ============================================================
+// CHUNKED ENCRYPTION ENGINE (v2 — GB-scale support)
+// ============================================================
+const CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB per chunk
+
+async function* encryptFileChunks(file, password) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const key = await deriveKey(password, salt);
+
+    const header = new Uint8Array(28);
+    header.set([0x54, 0x53, 0x36, 0x34], 0);
+    header.set(salt, 4);
+    const hView = new DataView(header.buffer);
+    hView.setBigUint64(20, BigInt(file.size), true);
+    yield header;
+
+    let offset = 0;
+    let chunkIndex = 0;
+
+    while (offset < file.size) {
+        const slice = file.slice(offset, offset + CHUNK_SIZE);
+        const ab = await slice.arrayBuffer();
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, ab);
+
+        const envelope = new Uint8Array(4 + 12 + 4 + ciphertext.byteLength);
+        const cv = new DataView(envelope.buffer);
+        cv.setUint32(0, chunkIndex, true);
+        envelope.set(iv, 4);
+        cv.setUint32(16, ciphertext.byteLength, true);
+        envelope.set(new Uint8Array(ciphertext), 20);
+
+        yield envelope;
+        offset += CHUNK_SIZE;
+        chunkIndex++;
+    }
+}
+
+async function decryptChunkedData(id, password) {
+    const meta = await dbGet('TS64_STASH_' + id);
+    if (!meta || typeof meta !== 'object' || meta.v !== 2) return null;
+
+    const headerRaw = await dbGet('TS64_STASH_' + id + '_header');
+    if (!headerRaw) return null;
+
+    const hdrArr = new Uint8Array(headerRaw.buffer || headerRaw);
+    const salt = hdrArr.slice(4, 20);
+    const key = await deriveKey(password, salt);
+
+    const decryptedParts = [];
+
+    for (let i = 0; i < meta.chunkCount; i++) {
+        const envelopeRaw = await dbGet(`TS64_STASH_${id}_chunk_${i}`);
+        if (!envelopeRaw) throw new Error(`Chunk ${i} missing from vault`);
+
+        const ev = new Uint8Array(envelopeRaw.buffer || envelopeRaw);
+        const iv = ev.slice(4, 16);
+        const ctLen = new DataView(ev.buffer, ev.byteOffset + 16, 4).getUint32(0, true);
+        const ciphertext = ev.slice(20, 20 + ctLen);
+
+        const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+        decryptedParts.push(new Uint8Array(plain));
+    }
+
+    const totalLen = decryptedParts.reduce((s, p) => s + p.byteLength, 0);
+    const merged = new Uint8Array(totalLen);
+    let pos = 0;
+    for (const part of decryptedParts) { merged.set(part, pos); pos += part.byteLength; }
+    return merged.buffer;
+}
+
+// ============================================================
+// PROGRESS BAR HELPERS
+// ============================================================
+function showProgressBar(containerId, label) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.innerHTML = `
+        <div class="p-4 border border-white/20 bg-black/40">
+            <div class="text-white font-bold tracking-widest text-xs mb-4 uppercase">${label}</div>
+            <div class="w-full bg-white/10 h-1 mb-3 overflow-hidden">
+                <div id="enc-progress-bar"
+                     class="bg-white h-1 transition-all duration-300 ease-out"
+                     style="width:0%"></div>
+            </div>
+            <div id="enc-progress-text" class="text-zinc-500 text-xs font-mono">INITIALIZING...</div>
+        </div>`;
+}
+
+function updateProgress(pct, statusText) {
+    const bar = document.getElementById('enc-progress-bar');
+    const txt = document.getElementById('enc-progress-text');
+    if (bar) bar.style.width = Math.min(100, pct).toFixed(1) + '%';
+    if (txt) txt.textContent = statusText || `${pct.toFixed(1)}%`;
+}
+
+// ============================================================
 // GLOBAL VAULT STATS (for sidebar + dashboard)
 // ============================================================
 async function getVaultSummary() {
@@ -173,9 +269,18 @@ async function getVaultSummary() {
         const item = items[i];
         if (typeof item === 'string') totalBytes += item.length;
         else if (item && item.byteLength) totalBytes += item.byteLength;
+        else if (item && typeof item === 'object' && item.totalSize) totalBytes += item.totalSize;
     }
 
-    const stashKeys = keys.filter(k => k && k.startsWith('TS64_STASH_'));
+    let quotaBytes = 5 * 1024 * 1024 * 1024;
+    try {
+        if (navigator.storage && navigator.storage.estimate) {
+            const { quota } = await navigator.storage.estimate();
+            if (quota) quotaBytes = quota;
+        }
+    } catch { }
+
+    const stashKeys = keys.filter(k => k && k.startsWith('TS64_STASH_') && !k.includes('_chunk_') && !k.includes('_header'));
     const stats = await getStats();
 
     return {
@@ -186,7 +291,9 @@ async function getVaultSummary() {
         totalBytes,
         totalKB: (totalBytes / 1024).toFixed(1),
         totalMB: (totalBytes / (1024 * 1024)).toFixed(2),
-        percentage: Math.min(100, (totalBytes / (50 * 1024 * 1024)) * 100).toFixed(2),
+        totalGB: (totalBytes / (1024 * 1024 * 1024)).toFixed(3),
+        quotaGB: (quotaBytes / (1024 * 1024 * 1024)).toFixed(1),
+        percentage: Math.min(100, (totalBytes / quotaBytes) * 100).toFixed(2),
     };
 }
 
@@ -331,9 +438,9 @@ async function handleMediaFile(file, resultContainerId, expectedType) {
     const lowerName = file.name.toLowerCase();
 
     const isAudio = expectedType === 'audio' &&
-        (file.type.startsWith('audio/') || lowerName.endsWith('.mp3') || lowerName.endsWith('.wav') || lowerName.endsWith('.ogg') || lowerName.endsWith('.flac'));
+        (file.type.startsWith('audio/') || ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a'].some(x => lowerName.endsWith(x)));
     const isVideo = expectedType === 'video' &&
-        (file.type.startsWith('video/') || lowerName.endsWith('.mp4') || lowerName.endsWith('.webm') || lowerName.endsWith('.mkv') || lowerName.endsWith('.mov'));
+        (file.type.startsWith('video/') || ['.mp4', '.webm', '.mkv', '.mov', '.avi'].some(x => lowerName.endsWith(x)));
     const isBackup = lowerName.endsWith('.ts64') || lowerName.endsWith('.ts64vid');
 
     if (!isAudio && !isVideo && !isBackup) {
@@ -341,8 +448,109 @@ async function handleMediaFile(file, resultContainerId, expectedType) {
         return;
     }
 
-    // Handle backup restore
+    // ---- Backup restore / stream decrypt ----
     if (isBackup) {
+        if (lowerName.endsWith('.ts64vid')) {
+            if (container) {
+                const formId = 'decrypt-form-' + Date.now();
+                const inputId = 'decrypt-input-' + Date.now();
+                container.innerHTML = `
+                    <div class="p-4 border border-white/20 bg-black/40 text-left">
+                        <div class="font-bold text-white mb-2 uppercase tracking-widest text-xs">DECRYPT VIDEO</div>
+                        <div class="text-zinc-500 text-xs mb-3">File: <span class="text-white">${file.name}</span></div>
+                        <form id="${formId}" class="flex gap-2">
+                            <input type="text" id="${inputId}" placeholder="TS64-XXXX-XXXX" class="bg-black border border-white/20 text-white px-3 py-2 text-xs w-full font-mono outline-none focus:border-white transition-colors" autocomplete="off" />
+                            <button type="submit" class="bg-white text-black font-bold px-4 py-2 text-xs tracking-widest hover:bg-zinc-300 transition-colors">UNLOCK</button>
+                        </form>
+                        <div id="${formId}-status" class="mt-3"></div>
+                    </div>`;
+
+                document.getElementById(formId).onsubmit = async (e) => {
+                    e.preventDefault();
+                    const pwd = document.getElementById(inputId).value.trim().toUpperCase();
+                    if (!pwd) return;
+                    const statusEl = document.getElementById(`${formId}-status`);
+
+                    const parts = pwd.split('-');
+                    if (parts.length !== 3 || parts[0] !== 'TS64') {
+                        statusEl.innerHTML = `<span class="text-red-500 font-bold text-xs">Access Denied: Invalid key format.</span>`;
+                        return;
+                    }
+
+                    // We are in a form submit event, which is a fresh user gesture. 
+                    const supportsStreamSave = 'showSaveFilePicker' in window;
+                    let writable = null;
+                    if (supportsStreamSave) {
+                        try {
+                            const handle = await window.showSaveFilePicker({ suggestedName: `decrypted_${file.name.replace('.ts64vid', '')}.mp4` });
+                            writable = await handle.createWritable();
+                        } catch (err) {
+                            if (err.name !== 'AbortError') statusEl.innerHTML = `<span class="text-red-500 text-xs">Decryption Fault: ${err.message}</span>`;
+                            return;
+                        }
+                    }
+
+                    statusEl.innerHTML = `
+                        <div class="w-full bg-white/10 h-1 mb-2 mt-2 overflow-hidden">
+                            <div id="enc-progress-bar" class="bg-white h-1 transition-all duration-300" style="width:0%"></div>
+                        </div>
+                        <div id="enc-progress-text" class="text-zinc-500 text-xs font-mono">Reading header...</div>`;
+
+                    try {
+                        const hdrRaw = await file.slice(0, 28).arrayBuffer();
+                        const hdrArr = new Uint8Array(hdrRaw);
+                        if (hdrArr[0] !== 0x54 || hdrArr[1] !== 0x53 || hdrArr[2] !== 0x36 || hdrArr[3] !== 0x34) {
+                            throw new Error('Not a valid TS64 backup file.');
+                        }
+                        const salt = hdrArr.slice(4, 20);
+                        const key = await deriveKey(pwd, salt);
+
+                        const outBlobParts = supportsStreamSave ? null : [];
+
+                        let offset = 28;
+                        let chunkIndex = 0;
+                        while (offset < file.size) {
+                            const envHdr = await file.slice(offset, offset + 20).arrayBuffer();
+                            if (envHdr.byteLength < 20) break;
+                            const ctLen = new DataView(envHdr).getUint32(16, true);
+                            const iv = new Uint8Array(envHdr, 4, 12);
+
+                            const chunkData = await file.slice(offset + 20, offset + 20 + ctLen).arrayBuffer();
+                            const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, chunkData);
+
+                            if (writable) await writable.write(plain);
+                            else outBlobParts.push(plain);
+
+                            offset += 20 + ctLen;
+                            chunkIndex++;
+                            updateProgress((offset / file.size) * 100, `Decrypting… ${(offset / (1024 * 1024)).toFixed(1)}MB`);
+                        }
+
+                        let url = '';
+                        if (writable) {
+                            await writable.close();
+                        } else {
+                            updateProgress(98, 'Building download…');
+                            const outBlob = new Blob(outBlobParts, { type: 'video/mp4' });
+                            url = URL.createObjectURL(outBlob);
+                            const a = document.createElement('a'); a.href = url; a.download = `decrypted_${file.name.replace('.ts64vid', '')}.mp4`;
+                            document.body.appendChild(a); a.click(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+                        }
+
+                        container.innerHTML = `
+                            <div class="p-4 border border-white/20 bg-black/40 text-sm space-y-3">
+                                <div class="font-bold text-white tracking-widest border-b border-white/10 pb-2 mb-3">VIDEO DECRYPTED</div>
+                                ${url ? `<video controls class="w-full border border-white/20" style="max-height:400px; background:#000;" src="${url}"></video>` : ''}
+                                <div class="text-zinc-400">File decrypted successfully & saved locally.</div>
+                            </div>`;
+                    } catch (err) {
+                        statusEl.innerHTML = `<span class="text-red-500 p-2 block border border-red-500/50 bg-red-500/10 text-xs">Access Denied: ${err.message}. Wrong key or corrupted payload?</span>`;
+                    }
+                };
+            }
+            return;
+        }
+
         const nameParts = file.name.split('.')[0].split('_');
         const id = nameParts[nameParts.length - 1];
         if (!id) { if (container) container.innerHTML = `<div class="text-red-500 text-sm p-4">ERROR: Malformed backup filename.</div>`; return; }
@@ -352,61 +560,141 @@ async function handleMediaFile(file, resultContainerId, expectedType) {
             <div class="p-4 border border-white/20 bg-black/40 text-sm">
                 <div class="font-bold text-white mb-2 tracking-widest">BACKUP RESTORED</div>
                 <div class="text-zinc-400">Key ID: <span class="text-white font-bold">${id}</span></div>
-                <div class="text-zinc-500 text-xs mt-2">Use <span class="text-white">unlock TS64-${id}-XXXX</span> in Terminal with your original password to decrypt.</div>
+                <div class="text-zinc-500 text-xs mt-2">Use <span class="text-white">unlock TS64-${id}-XXXX</span> in Terminal.</div>
             </div>`;
         renderSidebar();
         return;
     }
 
-    // Encrypt
-    if (container) container.innerHTML = `<div class="text-zinc-500 animate-pulse text-sm p-4">Encrypting ${(file.size / 1024).toFixed(1)} KB... please wait</div>`;
+    // ---- Audio — Chunked IndexedDB ----
+    if (isAudio) {
+        const pwd = generatePassword();
+        const id = pwd.split('-')[1];
+        showProgressBar(resultContainerId, `ENCRYPTING AUDIO — ${(file.size / (1024 * 1024)).toFixed(1)} MB`);
+        try {
+            const salt = crypto.getRandomValues(new Uint8Array(16));
+            const key = await deriveKey(pwd, salt);
+            const hdr = new Uint8Array(28);
+            hdr.set([0x54, 0x53, 0x36, 0x34], 0);
+            hdr.set(salt, 4);
+            new DataView(hdr.buffer).setBigUint64(20, BigInt(file.size), true);
+            await dbSet('TS64_STASH_' + id + '_header', hdr);
 
-    const pwd = generatePassword();
-    const id = pwd.split('-')[1];
-
-    try {
-        const arrayBuffer = await file.arrayBuffer();
-        const encryptedBuffer = await encryptData(arrayBuffer, pwd);
-
-        if (isAudio) {
-            await dbSet('TS64_STASH_' + id, encryptedBuffer);
+            let offset = 0, chunkIndex = 0, bytesProcessed = 0;
+            while (offset < file.size) {
+                const ab = await file.slice(offset, offset + CHUNK_SIZE).arrayBuffer();
+                const iv = crypto.getRandomValues(new Uint8Array(12));
+                const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, ab);
+                const env = new Uint8Array(20 + ct.byteLength);
+                const cv = new DataView(env.buffer);
+                cv.setUint32(0, chunkIndex, true);
+                env.set(iv, 4);
+                cv.setUint32(16, ct.byteLength, true);
+                env.set(new Uint8Array(ct), 20);
+                await dbSet(`TS64_STASH_${id}_chunk_${chunkIndex}`, env);
+                offset += CHUNK_SIZE; bytesProcessed += ab.byteLength; chunkIndex++;
+                updateProgress((bytesProcessed / file.size) * 100,
+                    `Chunk ${chunkIndex} · ${(bytesProcessed / (1024 * 1024)).toFixed(1)} / ${(file.size / (1024 * 1024)).toFixed(1)} MB`);
+            }
+            await dbSet('TS64_STASH_' + id, { type: 'audio', mime: file.type || 'audio/mpeg', name: file.name, chunkCount: chunkIndex, totalSize: file.size, v: 2 });
             await incrementStat('audio');
             if (container) container.innerHTML = `
                 <div class="p-4 border border-white/20 bg-black/40 text-sm space-y-2">
                     <div class="font-bold text-white tracking-widest border-b border-white/10 pb-2 mb-3">AUDIO ENCRYPTED & STORED</div>
                     <div class="text-zinc-400">File: <span class="text-white">${file.name}</span></div>
-                    <div class="text-zinc-400">Size: <span class="text-white">${(file.size / 1024).toFixed(1)} KB</span></div>
-                    <div class="text-zinc-400">Engine: <span class="text-white">AES-GCM 256-bit</span></div>
-                    <div class="text-zinc-400">Storage: <span class="text-white">IndexedDB Local Vault</span></div>
+                    <div class="text-zinc-400">Size: <span class="text-white">${(file.size / (1024 * 1024)).toFixed(2)} MB (${chunkIndex} chunks)</span></div>
+                    <div class="text-zinc-400">Engine: <span class="text-white">AES-GCM 256-bit (per-chunk IV)</span></div>
                     ${keyCardHTML(pwd)}
-                    <div class="text-zinc-600 text-xs mt-3">Use the Terminal command <span class="text-white">unlock ${pwd}</span> to play this audio.</div>
+                    <div class="text-zinc-600 text-xs mt-3">Use <span class="text-white">unlock ${pwd}</span> in Terminal to play.</div>
                 </div>`;
-        } else if (isVideo) {
-            // Video — download as encrypted file
-            const blob = new Blob([encryptedBuffer], { type: 'application/octet-stream' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `classified_footage_${id}.ts64vid`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            await incrementStat('video');
+            renderSidebar();
+        } catch (err) {
+            if (container) container.innerHTML = `<div class="text-red-500 text-sm p-4 border border-red-500/30 bg-red-500/5">Encryption Fault: ${err.message}</div>`;
+        }
+        return;
+    }
 
+    // ---- Video — Streaming download ----
+    if (isVideo) {
+        const pwd = generatePassword();
+        const id = pwd.split('-')[1];
+
+        const supportsStreamSave = 'showSaveFilePicker' in window;
+        let writable = null;
+        if (supportsStreamSave) {
+            try {
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: `classified_footage_${id}.ts64vid`,
+                    types: [{ description: 'Encrypted Video', accept: { 'application/octet-stream': ['.ts64vid'] } }]
+                });
+                writable = await handle.createWritable();
+            } catch (err) {
+                if (err.name === 'AbortError') {
+                    if (container) container.innerHTML = `<div class="text-zinc-500 text-sm p-4">Save dialog cancelled.</div>`;
+                } else {
+                    if (container) container.innerHTML = `<div class="text-red-500 text-sm p-4 border border-red-500/30">Encryption Fault: ${err.message}</div>`;
+                }
+                return;
+            }
+        }
+
+        showProgressBar(resultContainerId, `ENCRYPTING VIDEO — ${(file.size / (1024 * 1024)).toFixed(1)} MB`);
+        try {
+            const salt = crypto.getRandomValues(new Uint8Array(16));
+            const key = await deriveKey(pwd, salt);
+            const hdr = new Uint8Array(28);
+            hdr.set([0x54, 0x53, 0x36, 0x34], 0);
+            hdr.set(salt, 4);
+            new DataView(hdr.buffer).setBigUint64(20, BigInt(file.size), true);
+
+            if (writable) await writable.write(hdr);
+            const blobParts = supportsStreamSave ? null : [hdr];
+            let offset = 0, chunkIndex = 0, bytesProcessed = 0;
+            while (offset < file.size) {
+                const ab = await file.slice(offset, offset + CHUNK_SIZE).arrayBuffer();
+                const iv = crypto.getRandomValues(new Uint8Array(12));
+                const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, ab);
+                const env = new Uint8Array(20 + ct.byteLength);
+                const cv = new DataView(env.buffer);
+                cv.setUint32(0, chunkIndex, true);
+                env.set(iv, 4);
+                cv.setUint32(16, ct.byteLength, true);
+                env.set(new Uint8Array(ct), 20);
+                if (writable) await writable.write(env);
+                else blobParts.push(env);
+                offset += CHUNK_SIZE; bytesProcessed += ab.byteLength; chunkIndex++;
+                updateProgress((bytesProcessed / file.size) * 100,
+                    `Encrypting ${(bytesProcessed / (1024 * 1024)).toFixed(1)} / ${(file.size / (1024 * 1024)).toFixed(1)} MB`);
+            }
+            if (writable) {
+                await writable.close();
+            } else {
+                updateProgress(98, 'Building download…');
+                const blob = new Blob(blobParts, { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `classified_footage_${id}.ts64vid`;
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 60000);
+            }
+            await incrementStat('video');
             if (container) container.innerHTML = `
                 <div class="p-4 border border-white/20 bg-black/40 text-sm space-y-2">
                     <div class="font-bold text-white tracking-widest border-b border-white/10 pb-2 mb-3">VIDEO ENCRYPTED & DOWNLOADED</div>
                     <div class="text-zinc-400">File: <span class="text-white">${file.name}</span></div>
+                    <div class="text-zinc-400">Size: <span class="text-white">${(file.size / (1024 * 1024)).toFixed(2)} MB</span></div>
                     <div class="text-zinc-400">Output: <span class="text-white">classified_footage_${id}.ts64vid</span></div>
-                    <div class="text-zinc-400">Engine: <span class="text-white">AES-GCM 256-bit</span></div>
+                    <div class="text-zinc-400">Engine: <span class="text-white">AES-GCM 256-bit (chunked stream)</span></div>
                     ${keyCardHTML(pwd)}
-                    <div class="text-zinc-600 text-xs mt-3">Drag the downloaded <span class="text-white">.ts64vid</span> file back into this page + use your key to decrypt.</div>
                 </div>`;
+            renderSidebar();
+        } catch (err) {
+            if (err.name === 'AbortError') {
+                if (container) container.innerHTML = `<div class="text-zinc-500 text-sm p-4">Save dialog cancelled.</div>`;
+            } else {
+                if (container) container.innerHTML = `<div class="text-red-500 text-sm p-4 border border-red-500/30">Encryption Fault: ${err.message}</div>`;
+            }
         }
-        renderSidebar();
-    } catch (err) {
-        if (container) container.innerHTML = `<div class="text-red-500 text-sm p-4 border border-red-500/30 bg-red-500/5">Encryption Fault: ${err.message}</div>`;
     }
 }
 
@@ -458,7 +746,7 @@ async function renderDashboardTab() {
         <div class="border border-white/20 bg-black/40 p-5">
             <div class="flex justify-between text-xs text-zinc-500 uppercase tracking-widest mb-3">
                 <span class="font-bold text-white">Vault Utilization</span>
-                <span>${summary.totalKB} KB used / 50.0 MB limit</span>
+                <span>${summary.totalMB} MB used / ${summary.quotaGB} GB available</span>
             </div>
             <div class="font-mono text-xs text-zinc-300 leading-none">
                 [${barStr}] ${summary.percentage}%
@@ -643,7 +931,7 @@ function renderVideoTab() {
         <!-- Restore Zone -->
         <div class="border border-white/10 bg-black/20 p-5">
             <div class="text-[10px] font-bold tracking-widest text-white uppercase mb-3">RESTORE ENCRYPTED VIDEO</div>
-            <div class="text-zinc-500 text-xs mb-4">Drop a <code class="text-white">.ts64vid</code> encrypted file here to import it, then use <code class="text-white">unlock [KEY]</code> in Terminal to decrypt and watch.</div>
+            <div class="text-zinc-500 text-xs mb-4">Drop a <code class="text-white">.ts64vid</code> encrypted file here to instantly decrypt and play it, or use <code class="text-white">unlock_video</code> in the Terminal.</div>
             <div id="video-restore-zone"
                  class="border border-dashed border-white/10 p-6 text-center text-zinc-600 text-xs transition-all"
                  ondragover="event.preventDefault(); this.classList.add('border-white/40');"
@@ -671,7 +959,7 @@ function renderVideoTab() {
             <div><span class="text-white">2.</span> Browser encrypts it in-memory with AES-GCM 256 — zero server contact</div>
             <div><span class="text-white">3.</span> Encrypted file auto-downloads as <code class="text-white">classified_footage_XXXX.ts64vid</code></div>
             <div><span class="text-white">4.</span> Save the Access Key — without it the video cannot be decrypted</div>
-            <div><span class="text-white">5.</span> Drag the <code class="text-white">.ts64vid</code> file into the restore zone above, then use <code class="text-white">unlock [KEY]</code> in Terminal to watch</div>
+            <div><span class="text-white">5.</span> Drag the <code class="text-white">.ts64vid</code> file into the restore zone above, or use <code class="text-white">unlock_video</code> in Terminal to watch</div>
         </div>
     </div>`;
 
@@ -749,6 +1037,7 @@ function renderHelpTab() {
             ['export {key}', 'Downloads your encrypted stash as a portable .ts64 backup file.'],
             ['stash_audio', 'Opens a file picker to encrypt an audio file into the local vault.'],
             ['stash_video', 'Opens a file picker to encrypt a video file — auto-downloads as .ts64vid.'],
+            ['unlock_video', 'Opens a file picker to decrypt and play a .ts64vid video file.'],
             ['purge', 'Permanently wipes all TS64 encrypted data from the vault.'],
             ['status', 'Displays vault diagnostics: stash count, size, utilization.'],
             ['clear', 'Clears terminal output history.'],
@@ -899,7 +1188,7 @@ function initTerminalEngine() {
             <div>
                 <div class="flex justify-between text-xs text-zinc-500 uppercase tracking-widest mb-1">
                     <span>Vault Utilization</span>
-                    <span class="text-white">${summary.totalKB} KB / 50.0 MB</span>
+                    <span class="text-white">${summary.totalMB} MB / ${summary.quotaGB} GB</span>
                 </div>
                 <div class="font-mono text-xs text-zinc-300 leading-none pb-2">
                     [${barStr}] ${summary.percentage}%
@@ -998,16 +1287,47 @@ function initTerminalEngine() {
                     resWrap.innerHTML = `<span class="text-red-500">Error: Could not encode payload.</span>`;
                 } else {
                     const payload = binBlocks.join(' ');
+                    const payloadBytes = new TextEncoder().encode(payload);
                     const pwd = generatePassword();
                     const id = pwd.split('-')[1];
                     try {
-                        const encrypted = await encryptData(payload, pwd);
-                        await dbSet('TS64_STASH_' + id, encrypted);
+                        const salt = crypto.getRandomValues(new Uint8Array(16));
+                        const key = await deriveKey(pwd, salt);
+                        const hdr = new Uint8Array(28);
+                        hdr.set([0x54, 0x53, 0x36, 0x34], 0);
+                        hdr.set(salt, 4);
+                        new DataView(hdr.buffer).setBigUint64(20, BigInt(payloadBytes.byteLength), true);
+                        await dbSet('TS64_STASH_' + id + '_header', hdr);
+
+                        let offset = 0, chunkIndex = 0;
+                        while (offset < payloadBytes.byteLength) {
+                            const chunk = payloadBytes.slice(offset, offset + CHUNK_SIZE);
+                            const iv = crypto.getRandomValues(new Uint8Array(12));
+                            const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, chunk);
+                            const env = new Uint8Array(20 + ct.byteLength);
+                            const cv = new DataView(env.buffer);
+                            cv.setUint32(0, chunkIndex, true);
+                            env.set(iv, 4);
+                            cv.setUint32(16, ct.byteLength, true);
+                            env.set(new Uint8Array(ct), 20);
+                            await dbSet(`TS64_STASH_${id}_chunk_${chunkIndex}`, env);
+                            offset += CHUNK_SIZE;
+                            chunkIndex++;
+                        }
+
+                        await dbSet('TS64_STASH_' + id, {
+                            type: 'text',
+                            chunkCount: chunkIndex,
+                            totalSize: payloadBytes.byteLength,
+                            v: 2
+                        });
                         await incrementStat('text');
+
                         resWrap.innerHTML = `
                             <div class="font-bold text-white mb-3 tracking-wider border-b border-white/10 pb-2">STASH SECURED</div>
-                            <div class="mb-2 text-zinc-500">Encryption: <span class="text-white">AES-GCM 256-bit</span></div>
+                            <div class="mb-2 text-zinc-500">Encryption: <span class="text-white">AES-GCM 256-bit (chunked)</span></div>
                             <div class="mb-2 text-zinc-500">Location: <span class="text-white">IndexedDB Local Vault</span></div>
+                            <div class="mb-2 text-zinc-500">Size: <span class="text-white">${payloadBytes.byteLength} bytes (${chunkIndex} chunk${chunkIndex > 1 ? 's' : ''})</span></div>
                             ${keyCardHTML(pwd)}`;
                         renderSidebar();
                     } catch (err) {
@@ -1029,18 +1349,50 @@ function initTerminalEngine() {
             fileInput.onchange = async (ev) => {
                 const file = ev.target.files[0];
                 if (!file) { resWrap.innerHTML = `<span class="text-red-500">No file selected.</span>`; return; }
-                resWrap.innerHTML = `<div class="text-zinc-500 animate-pulse">Encrypting ${(file.size / 1024).toFixed(1)} KB...</div>`;
+
+                resWrap.innerHTML = `
+                    <div class="p-3 border border-white/20 bg-black/40">
+                        <div class="text-white font-bold tracking-widest text-xs mb-3 uppercase">ENCRYPTING AUDIO — ${(file.size / (1024 * 1024)).toFixed(1)} MB</div>
+                        <div class="w-full bg-white/10 h-1 mb-2 overflow-hidden">
+                            <div id="enc-progress-bar" class="bg-white h-1 transition-all duration-300" style="width:0%"></div>
+                        </div>
+                        <div id="enc-progress-text" class="text-zinc-500 text-xs font-mono">INITIALIZING...</div>
+                    </div>`;
+
                 const pwd = generatePassword();
                 const id = pwd.split('-')[1];
                 try {
-                    const ab = await file.arrayBuffer();
-                    const enc = await encryptData(ab, pwd);
-                    await dbSet('TS64_STASH_' + id, enc);
+                    const salt = crypto.getRandomValues(new Uint8Array(16));
+                    const key = await deriveKey(pwd, salt);
+                    const hdr = new Uint8Array(28);
+                    hdr.set([0x54, 0x53, 0x36, 0x34], 0);
+                    hdr.set(salt, 4);
+                    new DataView(hdr.buffer).setBigUint64(20, BigInt(file.size), true);
+                    await dbSet('TS64_STASH_' + id + '_header', hdr);
+
+                    let offset = 0, chunkIndex = 0, bytesProcessed = 0;
+                    while (offset < file.size) {
+                        const ab = await file.slice(offset, offset + CHUNK_SIZE).arrayBuffer();
+                        const iv = crypto.getRandomValues(new Uint8Array(12));
+                        const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, ab);
+                        const env = new Uint8Array(20 + ct.byteLength);
+                        const cv = new DataView(env.buffer);
+                        cv.setUint32(0, chunkIndex, true);
+                        env.set(iv, 4);
+                        cv.setUint32(16, ct.byteLength, true);
+                        env.set(new Uint8Array(ct), 20);
+                        await dbSet(`TS64_STASH_${id}_chunk_${chunkIndex}`, env);
+                        offset += CHUNK_SIZE; bytesProcessed += ab.byteLength; chunkIndex++;
+                        updateProgress((bytesProcessed / file.size) * 100,
+                            `Chunk ${chunkIndex} · ${(bytesProcessed / (1024 * 1024)).toFixed(1)} / ${(file.size / (1024 * 1024)).toFixed(1)} MB`);
+                    }
+                    await dbSet('TS64_STASH_' + id, { type: 'audio', mime: file.type || 'audio/mpeg', name: file.name, chunkCount: chunkIndex, totalSize: file.size, v: 2 });
                     await incrementStat('audio');
                     resWrap.innerHTML = `
                         <div class="font-bold text-white mb-3 tracking-wider border-b border-white/10 pb-2">AUDIO STASH SECURED</div>
                         <div class="mb-2 text-zinc-500">File: <span class="text-white">${file.name}</span></div>
-                        <div class="mb-2 text-zinc-500">Engine: <span class="text-white">AES-GCM 256-bit / IndexedDB</span></div>
+                        <div class="mb-2 text-zinc-500">Size: <span class="text-white">${(file.size / (1024 * 1024)).toFixed(2)} MB (${chunkIndex} chunks)</span></div>
+                        <div class="mb-2 text-zinc-500">Engine: <span class="text-white">AES-GCM 256-bit / IndexedDB (chunked)</span></div>
                         ${keyCardHTML(pwd)}`;
                     renderSidebar();
                 } catch (err) { resWrap.innerHTML = `<span class="text-red-500">Fault: ${err.message}</span>`; }
@@ -1063,26 +1415,163 @@ function initTerminalEngine() {
             fileInput.onchange = async (ev) => {
                 const file = ev.target.files[0];
                 if (!file) { resWrap.innerHTML = `<span class="text-red-500">No file selected.</span>`; return; }
-                resWrap.innerHTML = `<div class="text-zinc-500 animate-pulse">Encrypting ${(file.size / (1024 * 1024)).toFixed(2)} MB... (large files may take a moment)</div>`;
+
                 const pwd = generatePassword();
                 const id = pwd.split('-')[1];
+
+                const supportsStreamSave = 'showSaveFilePicker' in window;
+                let writable = null;
+                if (supportsStreamSave) {
+                    try {
+                        const handle = await window.showSaveFilePicker({
+                            suggestedName: `classified_footage_${id}.ts64vid`,
+                            types: [{ description: 'Encrypted Video', accept: { 'application/octet-stream': ['.ts64vid'] } }]
+                        });
+                        writable = await handle.createWritable();
+                    } catch (err) {
+                        if (err.name === 'AbortError') resWrap.innerHTML = `<span class="text-zinc-500">Save dialog cancelled.</span>`;
+                        else resWrap.innerHTML = `<span class="text-red-500">Encryption Fault: ${err.message}</span>`;
+                        return;
+                    }
+                }
+
+                resWrap.innerHTML = `
+                    <div class="p-3 border border-white/20 bg-black/40">
+                        <div class="text-white font-bold tracking-widest text-xs mb-3 uppercase">ENCRYPTING VIDEO — ${(file.size / (1024 * 1024)).toFixed(1)} MB</div>
+                        <div class="w-full bg-white/10 h-1 mb-2 overflow-hidden">
+                            <div id="enc-progress-bar" class="bg-white h-1 transition-all duration-300" style="width:0%"></div>
+                        </div>
+                        <div id="enc-progress-text" class="text-zinc-500 text-xs font-mono">INITIALIZING...</div>
+                    </div>`;
+
                 try {
-                    const ab = await file.arrayBuffer();
-                    const enc = await encryptData(ab, pwd);
-                    const blob = new Blob([enc], { type: 'application/octet-stream' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url; a.download = `classified_footage_${id}.ts64vid`;
-                    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
+                    const salt = crypto.getRandomValues(new Uint8Array(16));
+                    const key = await deriveKey(pwd, salt);
+                    const hdr = new Uint8Array(28);
+                    hdr.set([0x54, 0x53, 0x36, 0x34], 0);
+                    hdr.set(salt, 4);
+                    new DataView(hdr.buffer).setBigUint64(20, BigInt(file.size), true);
+
+                    if (writable) await writable.write(hdr);
+                    const blobParts = supportsStreamSave ? null : [hdr];
+                    let offset = 0, chunkIndex = 0, bytesProcessed = 0;
+                    while (offset < file.size) {
+                        const ab = await file.slice(offset, offset + CHUNK_SIZE).arrayBuffer();
+                        const iv = crypto.getRandomValues(new Uint8Array(12));
+                        const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, ab);
+                        const env = new Uint8Array(20 + ct.byteLength);
+                        const cv = new DataView(env.buffer);
+                        cv.setUint32(0, chunkIndex, true);
+                        env.set(iv, 4);
+                        cv.setUint32(16, ct.byteLength, true);
+                        env.set(new Uint8Array(ct), 20);
+                        if (writable) await writable.write(env);
+                        else blobParts.push(env);
+                        offset += CHUNK_SIZE; bytesProcessed += ab.byteLength; chunkIndex++;
+                        updateProgress((bytesProcessed / file.size) * 100,
+                            `${(bytesProcessed / (1024 * 1024)).toFixed(1)} / ${(file.size / (1024 * 1024)).toFixed(1)} MB`);
+                    }
+                    if (writable) {
+                        await writable.close();
+                    } else {
+                        updateProgress(98, 'Building download…');
+                        const blob = new Blob(blobParts, { type: 'application/octet-stream' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url; a.download = `classified_footage_${id}.ts64vid`;
+                        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                        setTimeout(() => URL.revokeObjectURL(url), 60000);
+                    }
                     await incrementStat('video');
                     resWrap.innerHTML = `
                         <div class="font-bold text-white mb-3 tracking-wider border-b border-white/10 pb-2">VIDEO STASH EXPORTED</div>
+                        <div class="mb-2 text-zinc-500">File: <span class="text-white">${file.name}</span></div>
                         <div class="mb-2 text-zinc-500">Output: <span class="text-white">classified_footage_${id}.ts64vid</span></div>
-                        <div class="mb-2 text-zinc-500">Engine: <span class="text-white">AES-GCM 256-bit</span></div>
+                        <div class="mb-2 text-zinc-500">Size: <span class="text-white">${(file.size / (1024 * 1024)).toFixed(2)} MB</span></div>
+                        <div class="mb-2 text-zinc-500">Engine: <span class="text-white">AES-GCM 256-bit (chunked stream)</span></div>
                         ${keyCardHTML(pwd)}`;
                     renderSidebar();
-                } catch (err) { resWrap.innerHTML = `<span class="text-red-500">Fault: ${err.message}</span>`; }
+                } catch (err) {
+                    if (err.name === 'AbortError') resWrap.innerHTML = `<span class="text-zinc-500">Save dialog cancelled.</span>`;
+                    else resWrap.innerHTML = `<span class="text-red-500">Fault: ${err.message}</span>`;
+                }
+            };
+        } else if (command === 'unlock_video') {
+            const btnId = 'btn-unlock-video-' + Date.now();
+            resWrap.innerHTML = `
+                <div class="text-zinc-500 mb-3">Select a .ts64vid file to decrypt</div>
+                <button id="${btnId}" class="bg-white text-black font-bold px-4 py-2 text-xs uppercase tracking-widest hover:bg-zinc-300 transition-colors">SELECT .ts64vid FILE</button>`;
+            outputContainer.appendChild(resWrap);
+
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.accept = '.ts64vid,.ts64';
+            fileInput.onchange = async (ev) => {
+                const file = ev.target.files[0];
+                if (!file) { resWrap.innerHTML = `<span class="text-red-500">No file selected.</span>`; return; }
+
+                const pwd = prompt(`Enter Decryption Key for ${file.name}:`);
+                if (!pwd) return;
+                const parts = pwd.split('-');
+                if (parts.length !== 3 || parts[0] !== 'TS64') {
+                    resWrap.innerHTML = `<span class="text-red-500">Access Denied: Invalid key format.</span>`;
+                    return;
+                }
+
+                resWrap.innerHTML = `
+                    <div class="p-3 border border-white/20 bg-black/40">
+                        <div class="text-white font-bold tracking-widest text-xs mb-3 uppercase">DECRYPTING VIDEO — ${(file.size / (1024 * 1024)).toFixed(1)} MB</div>
+                        <div class="w-full bg-white/10 h-1 mb-2 overflow-hidden">
+                            <div id="enc-progress-bar" class="bg-white h-1 transition-all duration-300" style="width:0%"></div>
+                        </div>
+                        <div id="enc-progress-text" class="text-zinc-500 text-xs font-mono">Reading header...</div>
+                    </div>`;
+
+                try {
+                    const hdrRaw = await file.slice(0, 28).arrayBuffer();
+                    const hdrArr = new Uint8Array(hdrRaw);
+                    if (hdrArr[0] !== 0x54 || hdrArr[1] !== 0x53 || hdrArr[2] !== 0x36 || hdrArr[3] !== 0x34) {
+                        throw new Error('Not a valid TS64 backup file.');
+                    }
+                    const salt = hdrArr.slice(4, 20);
+                    const key = await deriveKey(pwd, salt);
+
+                    const outBlobParts = [];
+                    let offset = 28;
+                    let chunkIndex = 0;
+                    while (offset < file.size) {
+                        const envHdr = await file.slice(offset, offset + 20).arrayBuffer();
+                        if (envHdr.byteLength < 20) break;
+                        const ctLen = new DataView(envHdr).getUint32(16, true);
+                        const iv = new Uint8Array(envHdr, 4, 12);
+
+                        const chunkData = await file.slice(offset + 20, offset + 20 + ctLen).arrayBuffer();
+                        const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, chunkData);
+                        outBlobParts.push(plain);
+
+                        offset += 20 + ctLen;
+                        chunkIndex++;
+                        updateProgress((offset / file.size) * 100, `Decrypting… ${(offset / (1024 * 1024)).toFixed(1)}MB`);
+                    }
+
+                    updateProgress(98, 'Building download…');
+                    const outBlob = new Blob(outBlobParts, { type: 'video/mp4' });
+                    const url = URL.createObjectURL(outBlob);
+
+                    // Show inline player instead of downloading immediately if from terminal, or let them click download
+                    resWrap.innerHTML = `
+                        <div class="p-4 border border-white/20 bg-black/40 space-y-3">
+                            <div class="font-bold text-white tracking-widest border-b border-white/10 pb-2">VIDEO DECRYPTED</div>
+                            <video controls class="w-full border border-white/20" style="max-height:400px; background:#000;" src="${url}"></video>
+                            <div class="mt-3">
+                                <a href="${url}" download="decrypted_${file.name.replace('.ts64vid', '')}.mp4" class="inline-block bg-white text-black font-bold px-4 py-2 text-xs uppercase tracking-widest hover:bg-zinc-300 transition-colors">
+                                    SAVE VIDEO TO DISK
+                                </a>
+                            </div>
+                        </div>`;
+                } catch (err) {
+                    resWrap.innerHTML = `<span class="text-red-500 p-2 block border border-red-500/50 bg-red-500/10">Access Denied: ${err.message}. Wrong key or corrupted payload?</span>`;
+                }
             };
             document.getElementById(btnId).addEventListener('click', () => fileInput.click());
             inputEl.value = '';
@@ -1101,53 +1590,128 @@ function initTerminalEngine() {
                     resWrap.innerHTML = `<span class="text-red-500">Access Denied: Invalid key format. Expected TS64-XXXX-XXXX</span>`;
                 } else {
                     const id = parts[1];
-                    const payload = await dbGet('TS64_STASH_' + id);
-                    if (!payload) {
-                        resWrap.innerHTML = `<span class="text-red-500">Access Denied: No data found for key ${id}.</span>`;
+
+                    const metaCheck = await dbGet('TS64_STASH_' + id);
+                    const isV2 = metaCheck && typeof metaCheck === 'object' && metaCheck.v === 2;
+
+                    if (isV2 && metaCheck.type === 'text') {
+                        resWrap.innerHTML = `<div class="text-zinc-500 animate-pulse">Decrypting text payload...</div>`;
+                        outputContainer.appendChild(resWrap);
+                        try {
+                            const plainBuffer = await decryptChunkedData(id, pwd);
+                            if (!plainBuffer) throw new Error('Decryption failed — wrong key?');
+                            const textStr = new TextDecoder('utf-8', { fatal: true }).decode(plainBuffer);
+                            const bins = textStr.trim().split(/\s+/);
+                            const englishPhrase = decodeBinaryBlocksToText(bins);
+                            if (!englishPhrase) throw new Error('Binary decode error — payload may be corrupted');
+                            resWrap.innerHTML = `
+                                <div class="font-bold text-white mb-3 tracking-wider border-b border-white/10 pb-2">STASH DECRYPTED</div>
+                                <div class="text-sm text-zinc-500 mb-4">${bins.length} blocks decoded</div>
+                                <div class="mt-4 p-5 border border-white/20 bg-white/5 text-white font-mono text-base tracking-wide flex gap-3 items-start">
+                                    <span class="shrink-0">></span>
+                                    <span class="whitespace-pre-wrap break-words leading-relaxed">${englishPhrase.replace(/</g, '&lt;')}</span>
+                                </div>`;
+                        } catch (err) {
+                            resWrap.innerHTML = `<span class="text-red-500 p-2 block border border-red-500/50 bg-red-500/10">Access Denied: ${err.message}</span>`;
+                        }
+
+                    } else if (isV2 && metaCheck.type === 'audio') {
+                        resWrap.innerHTML = `
+                            <div class="p-3 border border-white/20 bg-black/40">
+                                <div class="text-white font-bold tracking-widest text-xs mb-3">DECRYPTING AUDIO</div>
+                                <div class="w-full bg-white/10 h-1 mb-2">
+                                    <div id="enc-progress-bar" class="bg-white h-1 transition-all" style="width:0%"></div>
+                                </div>
+                                <div id="enc-progress-text" class="text-zinc-500 text-xs font-mono">Reading chunks...</div>
+                            </div>`;
+                        outputContainer.appendChild(resWrap);
+                        try {
+                            const headerRaw = await dbGet('TS64_STASH_' + id + '_header');
+                            if (!headerRaw) throw new Error('Header chunk missing');
+                            const hdrArr = new Uint8Array(headerRaw.buffer || headerRaw);
+                            const salt = hdrArr.slice(4, 20);
+                            const key = await deriveKey(pwd, salt);
+
+                            const decryptedParts = [];
+                            for (let ci = 0; ci < metaCheck.chunkCount; ci++) {
+                                const envRaw = await dbGet(`TS64_STASH_${id}_chunk_${ci}`);
+                                if (!envRaw) throw new Error(`Chunk ${ci} missing`);
+                                const ev = new Uint8Array(envRaw.buffer || envRaw);
+                                const iv = ev.slice(4, 16);
+                                const ctLen = new DataView(ev.buffer, ev.byteOffset + 16, 4).getUint32(0, true);
+                                const ct = ev.slice(20, 20 + ctLen);
+                                const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+                                decryptedParts.push(new Uint8Array(plain));
+                                updateProgress(((ci + 1) / metaCheck.chunkCount) * 100, `Chunk ${ci + 1} / ${metaCheck.chunkCount}`);
+                            }
+
+                            const totalLen = decryptedParts.reduce((s, p) => s + p.byteLength, 0);
+                            const merged = new Uint8Array(totalLen);
+                            let pos = 0;
+                            for (const p of decryptedParts) { merged.set(p, pos); pos += p.byteLength; }
+
+                            const blob = new Blob([merged], { type: metaCheck.mime || 'audio/mpeg' });
+                            const url = URL.createObjectURL(blob);
+                            resWrap.innerHTML = `
+                                <div class="p-4 border border-white/20 bg-black/40">
+                                    <div class="text-white font-bold mb-3 tracking-wider border-b border-white/10 pb-2">AUDIO DECRYPTED</div>
+                                    <audio controls class="w-full" style="filter: invert(1) hue-rotate(180deg);" src="${url}"></audio>
+                                </div>`;
+                        } catch (err) {
+                            resWrap.innerHTML = `<span class="text-red-500 p-2 block border border-red-500/50 bg-red-500/10">Access Denied: ${err.message}</span>`;
+                        }
+
                     } else {
-                        const decrypted = await decryptData(payload, pwd, false);
-                        if (!decrypted) {
-                            resWrap.innerHTML = `<span class="text-red-500 p-2 block border border-red-500/50 bg-red-500/10">Access Denied: Incorrect key or corrupted payload.</span>`;
+                        const payload = await dbGet('TS64_STASH_' + id);
+                        if (!payload) {
+                            resWrap.innerHTML = `
+                                <div class="text-red-500 font-bold mb-1">Access Denied: No data found for key ${id}.</div>
+                                <div class="text-zinc-500 text-xs leading-relaxed">If this is a Video Stash, it was saved directly to your device as a <span class="text-white">.ts64vid</span> file. Use the <strong class="text-white">unlock_video</strong> command to decrypt it.</div>`;
                         } else {
-                            try {
-                                const textStr = new TextDecoder("utf-8", { fatal: true }).decode(decrypted);
-                                const isText = /^[01 ]+$/.test(textStr.trim());
-                                if (isText) {
-                                    const bins = textStr.trim().split(/\s+/);
-                                    const englishPhrase = decodeBinaryBlocksToText(bins);
-                                    if (!englishPhrase) throw new Error("Binary parse error");
-                                    resWrap.innerHTML = `
-                                        <div class="font-bold text-white mb-3 tracking-wider border-b border-white/10 pb-2">STASH DECRYPTED</div>
-                                        <div class="text-sm text-zinc-500 mb-4">${bins.length} blocks decoded</div>
-                                        <div class="mt-4 p-5 border border-white/20 bg-white/5 text-white font-mono text-base tracking-wide flex gap-3 items-start">
-                                            <span class="shrink-0">></span>
-                                            <span class="whitespace-pre-wrap break-words leading-relaxed">${englishPhrase.replace(/</g, '&lt;')}</span>
-                                        </div>`;
-                                } else {
-                                    throw new Error("Not binary text");
+                            const decrypted = await decryptData(payload, pwd, false);
+                            if (!decrypted) {
+                                resWrap.innerHTML = `
+                                    <div class="text-red-500 p-2 border border-red-500/50 bg-red-500/10 mb-2">Access Denied: Incorrect key or corrupted payload.</div>
+                                    <div class="text-zinc-500 text-[10px] uppercase">If this was a large file encrypted via old drag-and-drop, it may be corrupted due to RAM limits. In the future, use stash_audio or stash_video.</div>`;
+                            } else {
+                                try {
+                                    const textStr = new TextDecoder("utf-8", { fatal: true }).decode(decrypted);
+                                    const isText = /^[01 ]+$/.test(textStr.trim());
+                                    if (isText) {
+                                        const bins = textStr.trim().split(/\s+/);
+                                        const englishPhrase = decodeBinaryBlocksToText(bins);
+                                        if (!englishPhrase) throw new Error("Binary parse error");
+                                        resWrap.innerHTML = `
+                                            <div class="font-bold text-white mb-3 tracking-wider border-b border-white/10 pb-2">STASH DECRYPTED</div>
+                                            <div class="text-sm text-zinc-500 mb-4">${bins.length} blocks decoded</div>
+                                            <div class="mt-4 p-5 border border-white/20 bg-white/5 text-white font-mono text-base tracking-wide flex gap-3 items-start">
+                                                <span class="shrink-0">></span>
+                                                <span class="whitespace-pre-wrap break-words leading-relaxed">${englishPhrase.replace(/</g, '&lt;')}</span>
+                                            </div>`;
+                                    } else {
+                                        throw new Error("Not binary text");
+                                    }
+                                } catch {
+                                    const blob = new Blob([decrypted]);
+                                    const url = URL.createObjectURL(blob);
+                                    const testAudio = new Audio(url);
+                                    testAudio.oncanplay = () => {
+                                        testAudio.src = '';
+                                        resWrap.innerHTML = `
+                                            <div class="p-4 border border-white/20 bg-black/40">
+                                                <div class="text-white font-bold mb-3 tracking-wider border-b border-white/10 pb-2">AUDIO DECRYPTED</div>
+                                                <audio controls class="w-full" style="filter: invert(1) hue-rotate(180deg);" src="${url}"></audio>
+                                            </div>`;
+                                    };
+                                    testAudio.onerror = () => {
+                                        resWrap.innerHTML = `
+                                            <div class="p-4 border border-white/20 bg-black/40">
+                                                <div class="text-white font-bold mb-3 tracking-wider border-b border-white/10 pb-2">MEDIA DECRYPTED</div>
+                                                <video controls class="w-full border border-white/20" style="max-height:400px; background:#000;" src="${url}"></video>
+                                            </div>`;
+                                    };
+                                    testAudio.load();
                                 }
-                            } catch {
-                                // Try as media
-                                const blob = new Blob([decrypted]);
-                                const url = URL.createObjectURL(blob);
-                                // Try audio first, then video
-                                const testAudio = new Audio(url);
-                                testAudio.oncanplay = () => {
-                                    testAudio.src = '';
-                                    resWrap.innerHTML = `
-                                        <div class="p-4 border border-white/20 bg-black/40">
-                                            <div class="text-white font-bold mb-3 tracking-wider border-b border-white/10 pb-2">AUDIO DECRYPTED</div>
-                                            <audio controls class="w-full" style="filter: invert(1) hue-rotate(180deg);" src="${url}"></audio>
-                                        </div>`;
-                                };
-                                testAudio.onerror = () => {
-                                    resWrap.innerHTML = `
-                                        <div class="p-4 border border-white/20 bg-black/40">
-                                            <div class="text-white font-bold mb-3 tracking-wider border-b border-white/10 pb-2">MEDIA DECRYPTED</div>
-                                            <video controls class="w-full border border-white/20" style="max-height:400px; background:#000;" src="${url}"></video>
-                                        </div>`;
-                                };
-                                testAudio.load();
                             }
                         }
                     }
@@ -1178,13 +1742,15 @@ function initTerminalEngine() {
             const keys = await dbKeys();
             let wiped = 0;
             for (let key of keys) {
-                if (key && key.startsWith('TS64_STASH_')) { await dbRemove(key); wiped++; }
+                if (key && (key.startsWith('TS64_STASH_') || key.startsWith('TS64_META_'))) {
+                    await dbRemove(key);
+                    wiped++;
+                }
             }
-            // Reset stats
             await dbSet('TS64_META_stats', { text: 0, audio: 0, video: 0 });
             resWrap.innerHTML = `
                 <div class="font-bold text-red-500 mb-2 border-b border-red-500/30 pb-2">VAULT PURGED</div>
-                <div class="text-zinc-500">${wiped} encrypted objects destroyed.</div>`;
+                <div class="text-zinc-500">${wiped} objects destroyed (stashes + all chunk data).</div>`;
             renderSidebar();
 
         } else {
@@ -1225,37 +1791,92 @@ function initTerminalEngine() {
             await dbSet('TS64_STASH_' + id, new Uint8Array(buf));
             wrp.innerHTML = `<div class="font-bold text-white mb-2">BACKUP RESTORED</div><div class="text-zinc-500">Key: ${id}</div>`;
         } else if (isAudio) {
-            wrp.innerHTML = `<div class="text-zinc-500 animate-pulse">Encrypting audio: ${file.name}...</div>`;
+            wrp.innerHTML = `
+                <div class="p-3 border border-white/20 bg-black/40">
+                    <div class="text-white font-bold tracking-widest text-xs mb-3 uppercase">ENCRYPTING AUDIO — ${(file.size / (1024 * 1024)).toFixed(1)} MB</div>
+                    <div class="w-full bg-white/10 h-1 mb-2 overflow-hidden">
+                        <div id="enc-progress-bar" class="bg-white h-1 transition-all duration-300" style="width:0%"></div>
+                    </div>
+                </div>`;
             const pwd = generatePassword();
             const id = pwd.split('-')[1];
             try {
-                const ab = await file.arrayBuffer();
-                const enc = await encryptData(ab, pwd);
-                await dbSet('TS64_STASH_' + id, enc);
+                const salt = crypto.getRandomValues(new Uint8Array(16));
+                const key = await deriveKey(pwd, salt);
+                const hdr = new Uint8Array(28);
+                hdr.set([0x54, 0x53, 0x36, 0x34], 0);
+                hdr.set(salt, 4);
+                new DataView(hdr.buffer).setBigUint64(20, BigInt(file.size), true);
+                await dbSet('TS64_STASH_' + id + '_header', hdr);
+
+                let offset = 0, chunkIndex = 0, bytesProcessed = 0;
+                while (offset < file.size) {
+                    const ab = await file.slice(offset, offset + CHUNK_SIZE).arrayBuffer();
+                    const iv = crypto.getRandomValues(new Uint8Array(12));
+                    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, ab);
+                    const env = new Uint8Array(20 + ct.byteLength);
+                    const cv = new DataView(env.buffer);
+                    cv.setUint32(0, chunkIndex, true);
+                    env.set(iv, 4);
+                    cv.setUint32(16, ct.byteLength, true);
+                    env.set(new Uint8Array(ct), 20);
+                    await dbSet(`TS64_STASH_${id}_chunk_${chunkIndex}`, env);
+                    offset += CHUNK_SIZE; bytesProcessed += ab.byteLength; chunkIndex++;
+                    updateProgress((bytesProcessed / file.size) * 100, '');
+                }
+                await dbSet('TS64_STASH_' + id, { type: 'audio', mime: file.type || 'audio/mpeg', name: file.name, chunkCount: chunkIndex, totalSize: file.size, v: 2 });
                 await incrementStat('audio');
                 wrp.innerHTML = `
-                    <div class="font-bold text-white mb-2">AUDIO STASH SECURED</div>
-                    <div class="text-zinc-500 mb-1">File: ${file.name}</div>
+                    <div class="font-bold text-white mb-2 tracking-wider border-b border-white/10 pb-2">AUDIO STASH SECURED</div>
+                    <div class="text-zinc-500 mb-1">File: <span class="text-white">${file.name}</span></div>
                     ${keyCardHTML(pwd)}`;
                 renderSidebar();
             } catch (err) { wrp.innerHTML = `<span class="text-red-500">Fault: ${err.message}</span>`; }
         } else if (isVideo) {
-            wrp.innerHTML = `<div class="text-zinc-500 animate-pulse">Encrypting video: ${file.name}...</div>`;
+            wrp.innerHTML = `
+                <div class="p-3 border border-white/20 bg-black/40">
+                    <div class="text-white font-bold tracking-widest text-xs mb-3 uppercase">ENCRYPTING VIDEO — ${(file.size / (1024 * 1024)).toFixed(1)} MB</div>
+                    <div class="w-full bg-white/10 h-1 mb-2 overflow-hidden">
+                        <div id="enc-progress-bar" class="bg-white h-1 transition-all duration-300" style="width:0%"></div>
+                    </div>
+                </div>`;
             const pwd = generatePassword();
             const id = pwd.split('-')[1];
             try {
-                const ab = await file.arrayBuffer();
-                const enc = await encryptData(ab, pwd);
-                const blob = new Blob([enc], { type: 'application/octet-stream' });
+                const salt = crypto.getRandomValues(new Uint8Array(16));
+                const key = await deriveKey(pwd, salt);
+                const hdr = new Uint8Array(28);
+                hdr.set([0x54, 0x53, 0x36, 0x34], 0);
+                hdr.set(salt, 4);
+                new DataView(hdr.buffer).setBigUint64(20, BigInt(file.size), true);
+
+                const blobParts = [hdr];
+                let offset = 0, chunkIndex = 0, bytesProcessed = 0;
+                while (offset < file.size) {
+                    const ab = await file.slice(offset, offset + CHUNK_SIZE).arrayBuffer();
+                    const iv = crypto.getRandomValues(new Uint8Array(12));
+                    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, ab);
+                    const env = new Uint8Array(20 + ct.byteLength);
+                    const cv = new DataView(env.buffer);
+                    cv.setUint32(0, chunkIndex, true);
+                    env.set(iv, 4);
+                    cv.setUint32(16, ct.byteLength, true);
+                    env.set(new Uint8Array(ct), 20);
+                    blobParts.push(env);
+                    offset += CHUNK_SIZE; bytesProcessed += ab.byteLength; chunkIndex++;
+                    updateProgress((bytesProcessed / file.size) * 100, '');
+                }
+                const blob = new Blob(blobParts, { type: 'application/octet-stream' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url; a.download = `classified_footage_${id}.ts64vid`;
                 document.body.appendChild(a); a.click(); document.body.removeChild(a);
-                URL.revokeObjectURL(url);
+                setTimeout(() => URL.revokeObjectURL(url), 60000);
+
                 await incrementStat('video');
                 wrp.innerHTML = `
-                    <div class="font-bold text-white mb-2">VIDEO STASH EXPORTED</div>
-                    <div class="text-zinc-500 mb-1">File: classified_footage_${id}.ts64vid (downloading...)</div>
+                    <div class="font-bold text-white mb-2 tracking-wider border-b border-white/10 pb-2">VIDEO STASH EXPORTED</div>
+                    <div class="text-zinc-500 mb-1">Output: <span class="text-white">classified_footage_${id}.ts64vid</span></div>
                     ${keyCardHTML(pwd)}`;
                 renderSidebar();
             } catch (err) { wrp.innerHTML = `<span class="text-red-500">Fault: ${err.message}</span>`; }
