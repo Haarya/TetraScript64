@@ -10,6 +10,93 @@ const state = {
 };
 
 // ============================================================
+// DIARY STATE (in-memory, pre-encryption)
+// ============================================================
+const diaryState = {
+    name: '',
+    author: '',
+    createdAt: null,
+    entries: {},       // { "YYYY-MM-DD": { text: "", stashed: false, checksum: "" } }
+    currentDate: null,
+};
+
+function resetDiaryState() {
+    diaryState.name = '';
+    diaryState.author = '';
+    diaryState.createdAt = null;
+    diaryState.entries = {};
+    diaryState.currentDate = null;
+}
+
+function getTodayISO() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// "2026-03-03" -> "2026-MAR-03"  (matches NODE_HISTORY.LOG format)
+function toLogDate(isoDate) {
+    const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+    const [y, m, d] = isoDate.split('-');
+    return `${y}-${months[parseInt(m, 10) - 1]}-${d}`;
+}
+
+// "2026-03-03" -> "Tuesday, 03 March 2026"
+function formatDisplayDate(isoDate) {
+    const d = new Date(isoDate + 'T00:00:00');
+    return d.toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+}
+
+// ============================================================
+// CREATE NODE MODAL CONTROLS
+// ============================================================
+window.openCreateNodeModal = function () {
+    document.getElementById('create-node-modal').classList.remove('hidden');
+    document.getElementById('diary-config-form').classList.add('hidden');
+    document.getElementById('diary-name-input').value = '';
+    document.getElementById('diary-author-input').value = '';
+};
+
+window.closeCreateNodeModal = function () {
+    document.getElementById('create-node-modal').classList.add('hidden');
+};
+
+window.selectNodeType = function (type) {
+    if (type === 'diary') {
+        document.getElementById('diary-config-form').classList.remove('hidden');
+        document.getElementById('diary-name-input').focus();
+    }
+};
+
+window.launchDiaryEditor = function () {
+    const name = document.getElementById('diary-name-input').value.trim();
+    if (!name) {
+        const inp = document.getElementById('diary-name-input');
+        inp.style.borderColor = '#ef4444';
+        setTimeout(() => inp.style.borderColor = '', 1500);
+        return;
+    }
+
+    if (diaryState.name && Object.keys(diaryState.entries).some(k => !diaryState.entries[k].stashed)) {
+        if (!confirm(`An unencrypted node draft '${diaryState.name}' exists. Overwrite it?`)) {
+            closeCreateNodeModal();
+            switchTab('diary');
+            return;
+        }
+    }
+
+    const author = document.getElementById('diary-author-input').value.trim() || 'ROOT_ADMIN';
+    resetDiaryState();
+    diaryState.name = name;
+    diaryState.author = author;
+    diaryState.createdAt = new Date().toISOString();
+    diaryState.currentDate = getTodayISO();
+    diaryState.entries[diaryState.currentDate] = { text: '', stashed: false, checksum: '' };
+    localStorage.setItem('ts64_diary_draft', JSON.stringify(diaryState));
+    closeCreateNodeModal();
+    switchTab('diary');
+};
+
+// ============================================================
 // GLOBAL INDEXEDDB LAYER
 // ============================================================
 const DB_NAME = 'TetraScriptDB';
@@ -91,8 +178,8 @@ async function dbGetAll() {
 async function getStats() {
     try {
         const s = await dbGet('TS64_META_stats');
-        return s || { text: 0, audio: 0, video: 0 };
-    } catch { return { text: 0, audio: 0, video: 0 }; }
+        return s || { text: 0, audio: 0, video: 0, diary: 0 };
+    } catch { return { text: 0, audio: 0, video: 0, diary: 0 }; }
 }
 
 async function incrementStat(field) {
@@ -288,6 +375,7 @@ async function getVaultSummary() {
         textCount: stats.text || 0,
         audioCount: stats.audio || 0,
         videoCount: stats.video || 0,
+        diaryCount: stats.diary || 0,
         totalBytes,
         totalKB: (totalBytes / 1024).toFixed(1),
         totalMB: (totalBytes / (1024 * 1024)).toFixed(2),
@@ -309,6 +397,7 @@ async function renderSidebar() {
         { icon: 'folder', label: '/text_stash', count: summary.textCount, tab: 'terminal' },
         { icon: 'folder', label: '/audio_stash', count: summary.audioCount, tab: 'audio' },
         { icon: 'folder', label: '/video_stash', count: summary.videoCount, tab: 'video' },
+        { icon: 'folder', label: '/diary_vault', count: summary.diaryCount, tab: 'diary' },
         { icon: 'folder', label: '/etc', count: null, tab: 'help' },
     ];
 
@@ -390,6 +479,7 @@ function switchTab(tab) {
         case 'dashboard': renderDashboardTab(); break;
         case 'audio': renderAudioTab(); break;
         case 'video': renderVideoTab(); break;
+        case 'diary': renderDiaryTab(); break;
         case 'terminal':
             renderTerminalTab();
             rightSidebar.style.display = 'none';
@@ -697,6 +787,374 @@ async function handleMediaFile(file, resultContainerId, expectedType) {
         }
     }
 }
+
+// ============================================================
+// DIARY EDITOR TAB  (NODE_HISTORY.LOG stitch UI)
+// ============================================================
+function renderDiaryTab() {
+    if (!diaryState.name) {
+        mainContent.innerHTML = `
+        <div class="flex items-center justify-center h-full text-zinc-600 text-sm tracking-widest font-mono">
+            <div class="text-center">
+                <div class="text-3xl mb-4">📓</div>
+                <div>No diary node active.</div>
+                <div class="mt-2 text-xs">Click <span class="text-white font-bold">+ CREATE_NODE</span> to initialize one.</div>
+            </div>
+        </div>`;
+        rightSidebar.innerHTML = '';
+        return;
+    }
+
+    const sortedDates = Object.keys(diaryState.entries).sort();
+
+    // ── Center: date rows ──────────────────────────────────────
+    const rowsHtml = sortedDates.map(d => {
+        const entry = diaryState.entries[d];
+        const logDate = toLogDate(d);
+        const isSelected = d === diaryState.currentDate;
+        const isStashed = entry.stashed;
+
+        if (isStashed) {
+            const shortCheck = entry.checksum ? entry.checksum.substring(0, 8).toUpperCase() + '...' : 'N/A';
+            const sizeKb = Math.ceil((entry.text.length * 2) / 1024) || 1;
+            return `
+            <div class="bg-white text-black px-3 py-1.5 -mx-3 flex items-center font-mono text-sm cursor-pointer"
+                 onclick="switchDiaryDate('${d}')">
+                <span class="mr-2 font-bold">&gt;</span>
+                <span class="font-bold">[${logDate}] [STASHED] &gt; Metadata: ${sizeKb}KB, Encrypted, Checksum: ${shortCheck}</span>
+                <span class="ml-auto">&lt;</span>
+            </div>`;
+        }
+
+        if (isSelected) {
+            return `
+            <div class="border-l-2 border-white pl-3 py-2 -ml-3 font-mono mt-1 mb-1">
+                <div class="flex items-center justify-between text-white text-sm font-bold mb-2 cursor-pointer"
+                     onclick="switchDiaryDate('${d}')">
+                    <span>&gt; [${logDate}]</span>
+                    <span class="text-[10px] text-zinc-500 font-normal">${formatDisplayDate(d)}</span>
+                </div>
+                <textarea id="diary-editor"
+                    class="w-full bg-black border border-white/20 text-zinc-200 p-3 font-mono text-xs leading-relaxed resize-none outline-none focus:border-white transition-colors"
+                    rows="8"
+                    placeholder="Write entry for ${logDate}..."
+                    spellcheck="true">${entry.text}</textarea>
+                <div class="flex gap-2 mt-2">
+                    <button onclick="saveDiaryEntry()" id="diary-save-btn"
+                            class="bg-white text-black font-bold px-4 py-1.5 text-[10px] uppercase tracking-widest hover:bg-zinc-200 transition-colors">
+                        SAVE ENTRY
+                    </button>
+                    <button onclick="addDiaryEntry()"
+                            class="border border-white/30 text-white font-bold px-4 py-1.5 text-[10px] uppercase tracking-widest hover:border-white transition-colors">
+                        + NEW DATE
+                    </button>
+                </div>
+            </div>`;
+        }
+
+        return `
+        <div class="text-zinc-500 hover:text-white text-sm font-mono py-1 cursor-pointer transition-colors block"
+             onclick="switchDiaryDate('${d}')">[${logDate}]</div>`;
+    }).join('');
+
+    mainContent.innerHTML = `
+    <div class="p-8 pb-32 overflow-auto h-full font-mono relative">
+        <!-- Breadcrumb -->
+        <div class="flex items-center text-xs text-zinc-500 mb-6 font-bold tracking-widest uppercase">
+            <span>root</span>
+            <span class="mx-2 text-zinc-700">/</span>
+            <span class="text-white">root/nodes/diary_vault</span>
+            <div class="ml-auto w-3 h-5 bg-black border border-white"></div>
+        </div>
+
+        <h1 class="text-xl font-bold mb-6 tracking-wide text-white">
+            NODE_HISTORY.LOG | ${diaryState.name}
+        </h1>
+
+        <!-- Corner-bracket bordered container -->
+        <div class="border border-white p-2 relative min-h-[300px]">
+            <div class="absolute -top-px -left-px w-2 h-2 border-t-2 border-l-2 border-white"></div>
+            <div class="absolute -top-px -right-px w-2 h-2 border-t-2 border-r-2 border-white"></div>
+            <div class="absolute -bottom-px -left-px w-2 h-2 border-b-2 border-l-2 border-white"></div>
+            <div class="absolute -bottom-px -right-px w-2 h-2 border-b-2 border-r-2 border-white"></div>
+
+            <div class="p-4 space-y-1">
+                ${rowsHtml || '<div class="text-zinc-600 text-xs">No entries yet. Click + NEW DATE to begin.</div>'}
+            </div>
+        </div>
+
+        <!-- Terminal caret -->
+        <div class="mt-6 flex items-center font-mono text-sm text-zinc-500 mb-6">
+            <span class="mr-2">tetrascript64@system:~$</span>
+            <span class="w-2.5 h-5 bg-white animate-pulse block"></span>
+        </div>
+    </div>`;
+
+    // Wire textarea to state
+    const editor = document.getElementById('diary-editor');
+    if (editor) {
+        editor.addEventListener('input', () => {
+            diaryState.entries[diaryState.currentDate].text = editor.value;
+            localStorage.setItem('ts64_diary_draft', JSON.stringify(diaryState));
+        });
+        editor.focus();
+    }
+
+    // ── Right sidebar: TEMPORAL TOPOLOGY ──────────────────────
+    const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+    const byMonth = {};
+    sortedDates.forEach(d => {
+        const [y, m] = d.split('-');
+        const key = `${y}-${MONTHS[parseInt(m, 10) - 1]}`;
+        if (!byMonth[key]) byMonth[key] = [];
+        byMonth[key].push(d);
+    });
+
+    const timelineHtml = Object.entries(byMonth).map(([monthKey, dates]) => {
+        const [, mon] = monthKey.split('-');
+        const daysHtml = dates.map(d => {
+            const entry = diaryState.entries[d];
+            const dayNum = d.split('-')[2];
+            const isStashed = entry.stashed;
+            const isSelected = d === diaryState.currentDate;
+            const nodeId = `NODE_${d.replace(/-/g, '')}`;
+
+            if (isStashed) {
+                return `
+                <div class="flex items-center relative my-1.5 cursor-pointer" onclick="switchDiaryDate('${d}')">
+                    <div class="absolute -left-[9px] w-2 h-2 ${isSelected ? 'bg-white' : 'bg-black'} border border-white z-10"></div>
+                    <div class="ml-4 ${isSelected ? 'bg-white text-black' : 'bg-black text-white'} border border-white text-[10px] px-2 py-0.5 whitespace-nowrap z-20 font-bold tracking-wider">
+                        ${nodeId}: STABLE
+                    </div>
+                    <div class="absolute left-0 w-4 h-px bg-white"></div>
+                </div>`;
+            }
+
+            if (isSelected) {
+                return `
+                <div class="flex items-center relative my-1 cursor-pointer" onclick="switchDiaryDate('${d}')">
+                    <div class="absolute -left-[9px] w-2 h-2 bg-white border border-white z-10"></div>
+                    <span class="w-2 h-px bg-white -ml-4 mr-2 block"></span>
+                    <span class="text-white font-bold text-[10px] block">${dayNum}</span>
+                </div>`;
+            }
+
+            return `
+            <div class="flex items-center cursor-pointer hover:text-white transition-colors" onclick="switchDiaryDate('${d}')">
+                <span class="w-2 h-px bg-zinc-700 -ml-4 mr-2 block"></span>
+                <span class="text-[10px] block">${dayNum}</span>
+            </div>`;
+        }).join('');
+
+        return `
+        <div class="relative mb-8">
+            <span class="absolute -left-2 text-zinc-500 font-bold text-[10px] uppercase">${mon}</span>
+            <div class="ml-10 pl-4 space-y-1 text-zinc-500">${daysHtml}</div>
+        </div>`;
+    }).join('');
+
+    rightSidebar.innerHTML = `
+        <div class="h-12 border-b border-white flex items-center justify-between px-4 bg-[#030303]">
+            <span class="text-xs font-bold tracking-widest text-white uppercase">Temporal Topology</span>
+            <span class="material-symbols-outlined text-sm text-zinc-500">radio_button_checked</span>
+        </div>
+        <div class="flex-1 p-6 overflow-y-auto relative font-mono text-xs"
+             style="background-image:radial-gradient(#222 1px,transparent 1px);background-size:20px 20px;">
+            <div class="absolute left-10 top-0 bottom-0 w-px bg-zinc-800"></div>
+            ${timelineHtml || '<div class="text-zinc-600 ml-10 mt-4 text-[10px] uppercase tracking-widest">No entries yet.</div>'}
+        </div>
+        <div class="border-t border-white p-4 space-y-3 bg-[#030303] shrink-0">
+            <div class="text-[10px] font-bold tracking-[0.2em] text-zinc-500 uppercase">ENCRYPT VAULT</div>
+            <div class="text-zinc-600 text-[10px] leading-relaxed">
+                Encrypt the entire diary node with AES-GCM 256-bit. All entries locked behind a single Access Key.
+            </div>
+            <button onclick="encryptDiary()"
+                    class="w-full bg-white text-black font-bold py-2.5 text-[10px] uppercase tracking-widest hover:bg-zinc-200 transition-colors">
+                STASH DIARY NODE
+            </button>
+            <div id="diary-encrypt-result" class="mt-1"></div>
+        </div>`;
+}
+
+// Switch to a different date
+window.switchDiaryDate = function (dateStr) {
+    const editor = document.getElementById('diary-editor');
+    if (editor && diaryState.entries[diaryState.currentDate]) {
+        diaryState.entries[diaryState.currentDate].text = editor.value;
+    }
+    diaryState.currentDate = dateStr;
+    localStorage.setItem('ts64_diary_draft', JSON.stringify(diaryState));
+    renderDiaryTab();
+};
+
+// Add a new dated entry
+window.addDiaryEntry = function () {
+    const dateStr = prompt('Enter date for new entry (YYYY-MM-DD):', getTodayISO());
+    if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return;
+    if (!diaryState.entries[dateStr]) {
+        diaryState.entries[dateStr] = { text: '', stashed: false, checksum: '' };
+    }
+    diaryState.currentDate = dateStr;
+    localStorage.setItem('ts64_diary_draft', JSON.stringify(diaryState));
+    renderDiaryTab();
+};
+
+// Save current entry
+window.saveDiaryEntry = function () {
+    const editor = document.getElementById('diary-editor');
+    if (editor) diaryState.entries[diaryState.currentDate].text = editor.value;
+    localStorage.setItem('ts64_diary_draft', JSON.stringify(diaryState));
+    const btn = document.getElementById('diary-save-btn');
+    if (btn) {
+        const savedDate = toLogDate(diaryState.currentDate);
+        btn.textContent = `SAVED [${savedDate}]`;
+        btn.classList.add('bg-green-600', 'text-white');
+        btn.classList.remove('bg-white', 'text-black');
+        setTimeout(() => {
+            btn.textContent = 'SAVE ENTRY';
+            btn.classList.remove('bg-green-600', 'text-white');
+            btn.classList.add('bg-white', 'text-black');
+        }, 1500);
+    }
+};
+
+// ============================================================
+// DIARY ENCRYPTION
+// ============================================================
+window.encryptDiary = async function () {
+    const resultEl = document.getElementById('diary-encrypt-result');
+    if (!resultEl) return;
+
+    // Flush editor
+    const editor = document.getElementById('diary-editor');
+    if (editor && diaryState.entries[diaryState.currentDate]) {
+        diaryState.entries[diaryState.currentDate].text = editor.value;
+    }
+
+    const allText = Object.values(diaryState.entries).map(e => e.text).join(' ');
+    const totalWords = allText.trim().split(/\s+/).filter(Boolean).length;
+    if (totalWords === 0) {
+        resultEl.innerHTML = `<span class="text-red-500 text-[10px]">Error: No content to encrypt.</span>`;
+        return;
+    }
+
+    resultEl.innerHTML = `<div class="text-zinc-500 text-[10px] animate-pulse tracking-widest mt-2 uppercase">ENCRYPTING NODE...</div>`;
+
+    try {
+        const diaryPayload = {
+            name: diaryState.name,
+            author: diaryState.author,
+            createdAt: diaryState.createdAt,
+            encryptedAt: new Date().toISOString(),
+            entries: diaryState.entries,
+        };
+        const diaryJSON = JSON.stringify(diaryPayload);
+        const pwd = generatePassword();
+        const id = pwd.split('-')[1];
+        const payloadBytes = new TextEncoder().encode(diaryJSON);
+
+        // SHA-256 checksum for display in stashed rows
+        const hashBuf = await crypto.subtle.digest('SHA-256', payloadBytes);
+        const hashHex = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+        const checksum = hashHex.substring(0, 8).toUpperCase();
+
+        // Chunked AES-GCM encrypt into IndexedDB
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        const key = await deriveKey(pwd, salt);
+
+        const hdr = new Uint8Array(28);
+        hdr.set([0x54, 0x53, 0x36, 0x34], 0);
+        hdr.set(salt, 4);
+        new DataView(hdr.buffer).setBigUint64(20, BigInt(payloadBytes.byteLength), true);
+        await dbSet('TS64_DIARY_' + id + '_header', hdr);
+
+        let offset = 0, chunkIndex = 0;
+        const CHUNK_SIZE = 1048576; // 1MB 
+        while (offset < payloadBytes.byteLength) {
+            const chunk = payloadBytes.slice(offset, offset + CHUNK_SIZE);
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, chunk);
+            const env = new Uint8Array(20 + ct.byteLength);
+            const cv = new DataView(env.buffer);
+            cv.setUint32(0, chunkIndex, true);
+            env.set(iv, 4);
+            cv.setUint32(16, ct.byteLength, true);
+            env.set(new Uint8Array(ct), 20);
+            await dbSet(`TS64_DIARY_${id}_chunk_${chunkIndex}`, env);
+            offset += CHUNK_SIZE;
+            chunkIndex++;
+        }
+
+        // Write metadata record
+        await dbSet('TS64_DIARY_' + id, {
+            type: 'diary',
+            name: diaryState.name,
+            author: diaryState.author,
+            entryCount: Object.keys(diaryState.entries).length,
+            totalWords,
+            chunkCount: chunkIndex,
+            totalSize: payloadBytes.byteLength,
+            checksum,
+            createdAt: diaryState.createdAt,
+            encryptedAt: new Date().toISOString(),
+            v: 2
+        });
+
+        await incrementStat('diary');
+
+        // Flip all entries to stashed state so rows re-render as white-on-black
+        Object.keys(diaryState.entries).forEach(d => {
+            diaryState.entries[d].stashed = true;
+            diaryState.entries[d].checksum = checksum;
+        });
+
+        localStorage.removeItem('ts64_diary_draft');
+
+        // ── Auto-download a .ts64diary backup file ──
+        try {
+            const headerRaw = await dbGet('TS64_DIARY_' + id + '_header');
+            const dlParts = [headerRaw];
+            for (let ci = 0; ci < chunkIndex; ci++) {
+                const chunkRaw = await dbGet(`TS64_DIARY_${id}_chunk_${ci}`);
+                dlParts.push(chunkRaw);
+            }
+            const backupBlob = new Blob(dlParts, { type: 'application/octet-stream' });
+            const dlUrl = URL.createObjectURL(backupBlob);
+            const dlA = document.createElement('a');
+            dlA.href = dlUrl;
+            dlA.download = `diary_node_${id}.ts64diary`;
+            document.body.appendChild(dlA);
+            dlA.click();
+            document.body.removeChild(dlA);
+            setTimeout(() => URL.revokeObjectURL(dlUrl), 60000);
+        } catch (dlErr) { console.warn('Diary backup download failed:', dlErr); }
+
+        renderDiaryTab();
+
+        // Show key card
+        const res2 = document.getElementById('diary-encrypt-result');
+        if (res2) res2.innerHTML = `
+            <div class="border border-white bg-[#020202] p-3 space-y-2 font-mono mt-2 text-left">
+                <div class="text-white font-bold text-[10px] tracking-widest border-b border-white/20 pb-2 mb-2">NODE STASHED & EXPORTED</div>
+                <div class="text-zinc-500 text-[10px]">Entries: <span class="text-white font-bold">${Object.keys(diaryState.entries).length}</span></div>
+                <div class="text-zinc-500 text-[10px]">Checksum: <span class="text-white font-bold">${checksum}...</span></div>
+                <div class="text-zinc-500 text-[10px]">Backup: <span class="text-white font-bold">diary_node_${id}.ts64diary</span> (auto-downloaded)</div>
+                <div class="border border-white/40 p-3 text-center cursor-pointer mt-3 hover:border-white transition-colors group relative"
+                     onclick="navigator.clipboard.writeText('${pwd}'); this.querySelector('.ch').textContent='COPIED!'; setTimeout(()=>this.querySelector('.ch').textContent='CLICK TO COPY',2000);">
+                    <div class="text-[10px] text-zinc-500 mb-1 font-bold">ACCESS KEY — SAVE THIS</div>
+                    <div class="text-white font-bold font-mono tracking-widest text-xs">${pwd}</div>
+                    <div class="ch text-[9px] text-zinc-600 mt-2 tracking-widest">CLICK TO COPY</div>
+                </div>
+                <div class="text-[10px] text-zinc-500 leading-relaxed mt-2 p-2 bg-white/5 border border-white/10">
+                    Terminal: <span class="text-white font-bold">unlock ${pwd}</span>
+                </div>
+            </div>`;
+
+        renderSidebar();
+    } catch (err) {
+        resultEl.innerHTML = `<span class="text-red-500 text-[10px]">Fault: ${err.message}</span>`;
+    }
+};
 
 // ============================================================
 // DASHBOARD TAB
@@ -1030,13 +1488,13 @@ function renderHelpTab() {
                 <h3 class="text-white font-bold mb-3 tracking-wider">TERMINAL COMMANDS</h3>
                 <div class="space-y-3">
                     ${[
-            ['encode {string}', 'Maps English characters to Binary blocks (UTF-8 → 64-bit blocks).'],
+            ['encode {string}', 'Maps English characters to Binary blocks (UTF-8 \u2192 64-bit blocks).'],
             ['decode {binary}', 'Reverses space-separated binary blocks into English text.'],
             ['stash {string}', 'Encrypts text payload with AES-GCM 256 and stores in local IndexedDB vault.'],
-            ['unlock {key}', 'Decrypts a stash — works for text, audio, and video payloads.'],
-            ['export {key}', 'Downloads your encrypted stash as a portable .ts64 backup file.'],
+            ['unlock {key}', 'Decrypts a stash \u2014 auto-detects text, audio, video, and diary payloads.'],
+            ['export {key}', 'Downloads encrypted stash or diary as a portable backup file (.ts64 / .ts64diary).'],
             ['stash_audio', 'Opens a file picker to encrypt an audio file into the local vault.'],
-            ['stash_video', 'Opens a file picker to encrypt a video file — auto-downloads as .ts64vid.'],
+            ['stash_video', 'Opens a file picker to encrypt a video file \u2014 auto-downloads as .ts64vid.'],
             ['unlock_video', 'Opens a file picker to decrypt and play a .ts64vid video file.'],
             ['purge', 'Permanently wipes all TS64 encrypted data from the vault.'],
             ['status', 'Displays vault diagnostics: stash count, size, utilization.'],
@@ -1232,8 +1690,8 @@ function initTerminalEngine() {
                     ['encode {string}', 'Encode text to binary blocks'],
                     ['decode {binary}', 'Decode binary blocks to text'],
                     ['stash {string}', 'Encrypt and store text in vault'],
-                    ['unlock {key}', 'Decrypt stash (text, audio, or video)'],
-                    ['export {key}', 'Download encrypted backup (.ts64)'],
+                    ['unlock {key}', 'Decrypt stash (text, audio, video, or diary)'],
+                    ['export {key}', 'Download encrypted backup (.ts64 / .ts64diary)'],
                     ['stash_audio', 'Encrypt an audio file into vault'],
                     ['stash_video', 'Encrypt a video file (downloads as .ts64vid)'],
                     ['purge', 'Wipe all encrypted data from vault'],
@@ -1591,50 +2049,20 @@ function initTerminalEngine() {
                 } else {
                     const id = parts[1];
 
-                    const metaCheck = await dbGet('TS64_STASH_' + id);
-                    const isV2 = metaCheck && typeof metaCheck === 'object' && metaCheck.v === 2;
-
-                    if (isV2 && metaCheck.type === 'text') {
-                        resWrap.innerHTML = `<div class="text-zinc-500 animate-pulse">Decrypting text payload...</div>`;
-                        outputContainer.appendChild(resWrap);
+                    // ── Check if this is a diary key first ──
+                    const diaryMeta = await dbGet('TS64_DIARY_' + id);
+                    if (diaryMeta && diaryMeta.type === 'diary') {
+                        // Delegate to diary decryption logic
                         try {
-                            const plainBuffer = await decryptChunkedData(id, pwd);
-                            if (!plainBuffer) throw new Error('Decryption failed — wrong key?');
-                            const textStr = new TextDecoder('utf-8', { fatal: true }).decode(plainBuffer);
-                            const bins = textStr.trim().split(/\s+/);
-                            const englishPhrase = decodeBinaryBlocksToText(bins);
-                            if (!englishPhrase) throw new Error('Binary decode error — payload may be corrupted');
-                            resWrap.innerHTML = `
-                                <div class="font-bold text-white mb-3 tracking-wider border-b border-white/10 pb-2">STASH DECRYPTED</div>
-                                <div class="text-sm text-zinc-500 mb-4">${bins.length} blocks decoded</div>
-                                <div class="mt-4 p-5 border border-white/20 bg-white/5 text-white font-mono text-base tracking-wide flex gap-3 items-start">
-                                    <span class="shrink-0">></span>
-                                    <span class="whitespace-pre-wrap break-words leading-relaxed">${englishPhrase.replace(/</g, '&lt;')}</span>
-                                </div>`;
-                        } catch (err) {
-                            resWrap.innerHTML = `<span class="text-red-500 p-2 block border border-red-500/50 bg-red-500/10">Access Denied: ${err.message}</span>`;
-                        }
-
-                    } else if (isV2 && metaCheck.type === 'audio') {
-                        resWrap.innerHTML = `
-                            <div class="p-3 border border-white/20 bg-black/40">
-                                <div class="text-white font-bold tracking-widest text-xs mb-3">DECRYPTING AUDIO</div>
-                                <div class="w-full bg-white/10 h-1 mb-2">
-                                    <div id="enc-progress-bar" class="bg-white h-1 transition-all" style="width:0%"></div>
-                                </div>
-                                <div id="enc-progress-text" class="text-zinc-500 text-xs font-mono">Reading chunks...</div>
-                            </div>`;
-                        outputContainer.appendChild(resWrap);
-                        try {
-                            const headerRaw = await dbGet('TS64_STASH_' + id + '_header');
+                            const headerRaw = await dbGet('TS64_DIARY_' + id + '_header');
                             if (!headerRaw) throw new Error('Header chunk missing');
                             const hdrArr = new Uint8Array(headerRaw.buffer || headerRaw);
                             const salt = hdrArr.slice(4, 20);
                             const key = await deriveKey(pwd, salt);
 
                             const decryptedParts = [];
-                            for (let ci = 0; ci < metaCheck.chunkCount; ci++) {
-                                const envRaw = await dbGet(`TS64_STASH_${id}_chunk_${ci}`);
+                            for (let ci = 0; ci < diaryMeta.chunkCount; ci++) {
+                                const envRaw = await dbGet(`TS64_DIARY_${id}_chunk_${ci}`);
                                 if (!envRaw) throw new Error(`Chunk ${ci} missing`);
                                 const ev = new Uint8Array(envRaw.buffer || envRaw);
                                 const iv = ev.slice(4, 16);
@@ -1642,7 +2070,6 @@ function initTerminalEngine() {
                                 const ct = ev.slice(20, 20 + ctLen);
                                 const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
                                 decryptedParts.push(new Uint8Array(plain));
-                                updateProgress(((ci + 1) / metaCheck.chunkCount) * 100, `Chunk ${ci + 1} / ${metaCheck.chunkCount}`);
                             }
 
                             const totalLen = decryptedParts.reduce((s, p) => s + p.byteLength, 0);
@@ -1650,71 +2077,161 @@ function initTerminalEngine() {
                             let pos = 0;
                             for (const p of decryptedParts) { merged.set(p, pos); pos += p.byteLength; }
 
-                            const blob = new Blob([merged], { type: metaCheck.mime || 'audio/mpeg' });
-                            const url = URL.createObjectURL(blob);
+                            const diaryStr = new TextDecoder('utf-8', { fatal: true }).decode(merged);
+                            const diaryObj = JSON.parse(diaryStr);
+
+                            const sortedDates = Object.keys(diaryObj.entries).sort();
+                            const rowsHtml = sortedDates.map(d => {
+                                const logDate = toLogDate(d);
+                                const text = diaryObj.entries[d].text || '(empty entry)';
+                                return `
+                                <div class="border-l-2 border-white pl-3 py-2 -ml-3 font-mono mt-1 mb-3">
+                                    <div class="text-white text-sm font-bold mb-2">&gt; [${logDate}]</div>
+                                    <div class="text-zinc-300 text-xs leading-relaxed whitespace-pre-wrap">${text.replace(/</g, '&lt;')}</div>
+                                </div>`;
+                            }).join('');
+
                             resWrap.innerHTML = `
-                                <div class="p-4 border border-white/20 bg-black/40">
-                                    <div class="text-white font-bold mb-3 tracking-wider border-b border-white/10 pb-2">AUDIO DECRYPTED</div>
-                                    <audio controls class="w-full" style="filter: invert(1) hue-rotate(180deg);" src="${url}"></audio>
+                                <div class="border border-white p-4 relative font-mono mt-2 mb-4">
+                                    <div class="absolute -top-px -left-px w-2 h-2 border-t-2 border-l-2 border-white bg-black"></div>
+                                    <div class="absolute -top-px -right-px w-2 h-2 border-t-2 border-r-2 border-white bg-black"></div>
+                                    <div class="absolute -bottom-px -left-px w-2 h-2 border-b-2 border-l-2 border-white bg-black"></div>
+                                    <div class="absolute -bottom-px -right-px w-2 h-2 border-b-2 border-r-2 border-white bg-black"></div>
+                                    <h3 class="text-white font-bold tracking-widest uppercase mb-4 text-base">${diaryObj.name}</h3>
+                                    <div class="text-zinc-500 text-xs mb-4">Author: <span class="text-white">${diaryObj.author}</span> | Entries: <span class="text-white">${sortedDates.length}</span> | Checksum: <span class="text-white">${diaryMeta.checksum}</span></div>
+                                    <div class="space-y-2 relative">${rowsHtml}</div>
                                 </div>`;
                         } catch (err) {
                             resWrap.innerHTML = `<span class="text-red-500 p-2 block border border-red-500/50 bg-red-500/10">Access Denied: ${err.message}</span>`;
                         }
-
                     } else {
-                        const payload = await dbGet('TS64_STASH_' + id);
-                        if (!payload) {
+
+                        // ── Standard stash lookup ──
+                        const metaCheck = await dbGet('TS64_STASH_' + id);
+                        const isV2 = metaCheck && typeof metaCheck === 'object' && metaCheck.v === 2;
+
+                        if (isV2 && metaCheck.type === 'text') {
+                            resWrap.innerHTML = `<div class="text-zinc-500 animate-pulse">Decrypting text payload...</div>`;
+                            outputContainer.appendChild(resWrap);
+                            try {
+                                const plainBuffer = await decryptChunkedData(id, pwd);
+                                if (!plainBuffer) throw new Error('Decryption failed — wrong key?');
+                                const textStr = new TextDecoder('utf-8', { fatal: true }).decode(plainBuffer);
+                                const bins = textStr.trim().split(/\s+/);
+                                const englishPhrase = decodeBinaryBlocksToText(bins);
+                                if (!englishPhrase) throw new Error('Binary decode error — payload may be corrupted');
+                                resWrap.innerHTML = `
+                                <div class="font-bold text-white mb-3 tracking-wider border-b border-white/10 pb-2">STASH DECRYPTED</div>
+                                <div class="text-sm text-zinc-500 mb-4">${bins.length} blocks decoded</div>
+                                <div class="mt-4 p-5 border border-white/20 bg-white/5 text-white font-mono text-base tracking-wide flex gap-3 items-start">
+                                    <span class="shrink-0">></span>
+                                    <span class="whitespace-pre-wrap break-words leading-relaxed">${englishPhrase.replace(/</g, '&lt;')}</span>
+                                </div>`;
+                            } catch (err) {
+                                resWrap.innerHTML = `<span class="text-red-500 p-2 block border border-red-500/50 bg-red-500/10">Access Denied: ${err.message}</span>`;
+                            }
+
+                        } else if (isV2 && metaCheck.type === 'audio') {
                             resWrap.innerHTML = `
+                            <div class="p-3 border border-white/20 bg-black/40">
+                                <div class="text-white font-bold tracking-widest text-xs mb-3">DECRYPTING AUDIO</div>
+                                <div class="w-full bg-white/10 h-1 mb-2">
+                                    <div id="enc-progress-bar" class="bg-white h-1 transition-all" style="width:0%"></div>
+                                </div>
+                                <div id="enc-progress-text" class="text-zinc-500 text-xs font-mono">Reading chunks...</div>
+                            </div>`;
+                            outputContainer.appendChild(resWrap);
+                            try {
+                                const headerRaw = await dbGet('TS64_STASH_' + id + '_header');
+                                if (!headerRaw) throw new Error('Header chunk missing');
+                                const hdrArr = new Uint8Array(headerRaw.buffer || headerRaw);
+                                const salt = hdrArr.slice(4, 20);
+                                const key = await deriveKey(pwd, salt);
+
+                                const decryptedParts = [];
+                                for (let ci = 0; ci < metaCheck.chunkCount; ci++) {
+                                    const envRaw = await dbGet(`TS64_STASH_${id}_chunk_${ci}`);
+                                    if (!envRaw) throw new Error(`Chunk ${ci} missing`);
+                                    const ev = new Uint8Array(envRaw.buffer || envRaw);
+                                    const iv = ev.slice(4, 16);
+                                    const ctLen = new DataView(ev.buffer, ev.byteOffset + 16, 4).getUint32(0, true);
+                                    const ct = ev.slice(20, 20 + ctLen);
+                                    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+                                    decryptedParts.push(new Uint8Array(plain));
+                                    updateProgress(((ci + 1) / metaCheck.chunkCount) * 100, `Chunk ${ci + 1} / ${metaCheck.chunkCount}`);
+                                }
+
+                                const totalLen = decryptedParts.reduce((s, p) => s + p.byteLength, 0);
+                                const merged = new Uint8Array(totalLen);
+                                let pos = 0;
+                                for (const p of decryptedParts) { merged.set(p, pos); pos += p.byteLength; }
+
+                                const blob = new Blob([merged], { type: metaCheck.mime || 'audio/mpeg' });
+                                const url = URL.createObjectURL(blob);
+                                resWrap.innerHTML = `
+                                <div class="p-4 border border-white/20 bg-black/40">
+                                    <div class="text-white font-bold mb-3 tracking-wider border-b border-white/10 pb-2">AUDIO DECRYPTED</div>
+                                    <audio controls class="w-full" style="filter: invert(1) hue-rotate(180deg);" src="${url}"></audio>
+                                </div>`;
+                            } catch (err) {
+                                resWrap.innerHTML = `<span class="text-red-500 p-2 block border border-red-500/50 bg-red-500/10">Access Denied: ${err.message}</span>`;
+                            }
+
+                        } else {
+                            const payload = await dbGet('TS64_STASH_' + id);
+                            if (!payload) {
+                                resWrap.innerHTML = `
                                 <div class="text-red-500 font-bold mb-1">Access Denied: No data found for key ${id}.</div>
                                 <div class="text-zinc-500 text-xs leading-relaxed">If this is a Video Stash, it was saved directly to your device as a <span class="text-white">.ts64vid</span> file. Use the <strong class="text-white">unlock_video</strong> command to decrypt it.</div>`;
-                        } else {
-                            const decrypted = await decryptData(payload, pwd, false);
-                            if (!decrypted) {
-                                resWrap.innerHTML = `
+                            } else {
+                                const decrypted = await decryptData(payload, pwd, false);
+                                if (!decrypted) {
+                                    resWrap.innerHTML = `
                                     <div class="text-red-500 p-2 border border-red-500/50 bg-red-500/10 mb-2">Access Denied: Incorrect key or corrupted payload.</div>
                                     <div class="text-zinc-500 text-[10px] uppercase">If this was a large file encrypted via old drag-and-drop, it may be corrupted due to RAM limits. In the future, use stash_audio or stash_video.</div>`;
-                            } else {
-                                try {
-                                    const textStr = new TextDecoder("utf-8", { fatal: true }).decode(decrypted);
-                                    const isText = /^[01 ]+$/.test(textStr.trim());
-                                    if (isText) {
-                                        const bins = textStr.trim().split(/\s+/);
-                                        const englishPhrase = decodeBinaryBlocksToText(bins);
-                                        if (!englishPhrase) throw new Error("Binary parse error");
-                                        resWrap.innerHTML = `
+                                } else {
+                                    try {
+                                        const textStr = new TextDecoder("utf-8", { fatal: true }).decode(decrypted);
+                                        const isText = /^[01 ]+$/.test(textStr.trim());
+                                        if (isText) {
+                                            const bins = textStr.trim().split(/\s+/);
+                                            const englishPhrase = decodeBinaryBlocksToText(bins);
+                                            if (!englishPhrase) throw new Error("Binary parse error");
+                                            resWrap.innerHTML = `
                                             <div class="font-bold text-white mb-3 tracking-wider border-b border-white/10 pb-2">STASH DECRYPTED</div>
                                             <div class="text-sm text-zinc-500 mb-4">${bins.length} blocks decoded</div>
                                             <div class="mt-4 p-5 border border-white/20 bg-white/5 text-white font-mono text-base tracking-wide flex gap-3 items-start">
                                                 <span class="shrink-0">></span>
                                                 <span class="whitespace-pre-wrap break-words leading-relaxed">${englishPhrase.replace(/</g, '&lt;')}</span>
                                             </div>`;
-                                    } else {
-                                        throw new Error("Not binary text");
-                                    }
-                                } catch {
-                                    const blob = new Blob([decrypted]);
-                                    const url = URL.createObjectURL(blob);
-                                    const testAudio = new Audio(url);
-                                    testAudio.oncanplay = () => {
-                                        testAudio.src = '';
-                                        resWrap.innerHTML = `
+                                        } else {
+                                            throw new Error("Not binary text");
+                                        }
+                                    } catch {
+                                        const blob = new Blob([decrypted]);
+                                        const url = URL.createObjectURL(blob);
+                                        const testAudio = new Audio(url);
+                                        testAudio.oncanplay = () => {
+                                            testAudio.src = '';
+                                            resWrap.innerHTML = `
                                             <div class="p-4 border border-white/20 bg-black/40">
                                                 <div class="text-white font-bold mb-3 tracking-wider border-b border-white/10 pb-2">AUDIO DECRYPTED</div>
                                                 <audio controls class="w-full" style="filter: invert(1) hue-rotate(180deg);" src="${url}"></audio>
                                             </div>`;
-                                    };
-                                    testAudio.onerror = () => {
-                                        resWrap.innerHTML = `
+                                        };
+                                        testAudio.onerror = () => {
+                                            resWrap.innerHTML = `
                                             <div class="p-4 border border-white/20 bg-black/40">
                                                 <div class="text-white font-bold mb-3 tracking-wider border-b border-white/10 pb-2">MEDIA DECRYPTED</div>
                                                 <video controls class="w-full border border-white/20" style="max-height:400px; background:#000;" src="${url}"></video>
                                             </div>`;
-                                    };
-                                    testAudio.load();
+                                        };
+                                        testAudio.load();
+                                    }
                                 }
                             }
                         }
-                    }
+                    } // end else (standard stash)
                 }
             }
 
@@ -1723,18 +2240,47 @@ function initTerminalEngine() {
                 resWrap.innerHTML = `<span class="text-red-500">Error: Missing password key</span>`;
             } else {
                 const pwd = args.trim().toUpperCase();
-                const id = pwd.split('-')[1];
-                const data = await dbGet('TS64_STASH_' + id);
-                if (!data) {
-                    resWrap.innerHTML = `<span class="text-red-500">Export Failed: No stash found for key ${id}.</span>`;
+                const parts2 = pwd.split('-');
+                const id = parts2[1];
+
+                // Check if this is a diary export
+                const diaryMetaExport = await dbGet('TS64_DIARY_' + id);
+                if (diaryMetaExport && diaryMetaExport.type === 'diary') {
+                    try {
+                        const headerRaw = await dbGet('TS64_DIARY_' + id + '_header');
+                        if (!headerRaw) throw new Error('Diary header missing');
+                        const dlParts = [headerRaw];
+                        for (let ci = 0; ci < diaryMetaExport.chunkCount; ci++) {
+                            const chunkRaw = await dbGet(`TS64_DIARY_${id}_chunk_${ci}`);
+                            if (!chunkRaw) throw new Error(`Chunk ${ci} missing`);
+                            dlParts.push(chunkRaw);
+                        }
+                        const blob = new Blob(dlParts, { type: 'application/octet-stream' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url; a.download = `diary_node_${id}.ts64diary`;
+                        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                        setTimeout(() => URL.revokeObjectURL(url), 60000);
+                        resWrap.innerHTML = `
+                            <div class="text-white font-bold mb-2">DIARY EXPORTED: diary_node_${id}.ts64diary</div>
+                            <div class="text-zinc-500 text-xs">Diary: <span class="text-white">${diaryMetaExport.name}</span> (${diaryMetaExport.entryCount} entries)</div>`;
+                    } catch (err) {
+                        resWrap.innerHTML = `<span class="text-red-500">Export Failed: ${err.message}</span>`;
+                    }
                 } else {
-                    const blob = new Blob([data], { type: 'application/octet-stream' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url; a.download = `backup_${id}.ts64`;
-                    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                    resWrap.innerHTML = `<div class="text-white font-bold mb-2">BACKUP EXPORTED: backup_${id}.ts64</div><div class="text-zinc-500 text-xs">Drag this file back into the site to restore.</div>`;
+                    // Standard stash export
+                    const data = await dbGet('TS64_STASH_' + id);
+                    if (!data) {
+                        resWrap.innerHTML = `<span class="text-red-500">Export Failed: No stash found for key ${id}.</span>`;
+                    } else {
+                        const blob = new Blob([data], { type: 'application/octet-stream' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url; a.download = `backup_${id}.ts64`;
+                        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        resWrap.innerHTML = `<div class="text-white font-bold mb-2">BACKUP EXPORTED: backup_${id}.ts64</div><div class="text-zinc-500 text-xs">Drag this file back into the site to restore.</div>`;
+                    }
                 }
             }
 
@@ -1742,15 +2288,15 @@ function initTerminalEngine() {
             const keys = await dbKeys();
             let wiped = 0;
             for (let key of keys) {
-                if (key && (key.startsWith('TS64_STASH_') || key.startsWith('TS64_META_'))) {
+                if (key && (key.startsWith('TS64_STASH_') || key.startsWith('TS64_META_') || key.startsWith('TS64_DIARY_'))) {
                     await dbRemove(key);
                     wiped++;
                 }
             }
-            await dbSet('TS64_META_stats', { text: 0, audio: 0, video: 0 });
+            await dbSet('TS64_META_stats', { text: 0, audio: 0, video: 0, diary: 0 });
             resWrap.innerHTML = `
                 <div class="font-bold text-red-500 mb-2 border-b border-red-500/30 pb-2">VAULT PURGED</div>
-                <div class="text-zinc-500">${wiped} objects destroyed (stashes + all chunk data).</div>`;
+                <div class="text-zinc-500">${wiped} objects destroyed (stashes + diary nodes + all chunk data).</div>`;
             renderSidebar();
 
         } else {
@@ -1875,9 +2421,9 @@ function initTerminalEngine() {
 
                 await incrementStat('video');
                 wrp.innerHTML = `
-                    <div class="font-bold text-white mb-2 tracking-wider border-b border-white/10 pb-2">VIDEO STASH EXPORTED</div>
-                    <div class="text-zinc-500 mb-1">Output: <span class="text-white">classified_footage_${id}.ts64vid</span></div>
-                    ${keyCardHTML(pwd)}`;
+                                <div class="font-bold text-white mb-2 tracking-wider border-b border-white/10 pb-2">VIDEO STASH EXPORTED</div>
+                                    <div class="text-zinc-500 mb-1">Output: <span class="text-white">classified_footage_${id}.ts64vid</span></div>
+                    ${keyCardHTML(pwd)} `;
                 renderSidebar();
             } catch (err) { wrp.innerHTML = `<span class="text-red-500">Fault: ${err.message}</span>`; }
         } else {
@@ -1890,8 +2436,27 @@ function initTerminalEngine() {
 }
 
 // ============================================================
-// BOOT
 // ============================================================
+// BOOT AND PERSISTENCE
+// ============================================================
+try {
+    const draft = localStorage.getItem('ts64_diary_draft');
+    if (draft) {
+        const parsed = JSON.parse(draft);
+        if (parsed && parsed.name) Object.assign(diaryState, parsed);
+    }
+} catch (e) { }
+
+window.addEventListener('beforeunload', function (e) {
+    if (diaryState.name && Object.keys(diaryState.entries).length > 0) {
+        const hasUnsaved = Object.values(diaryState.entries).some(entry => !entry.stashed && entry.text && entry.text.trim().length > 0);
+        if (hasUnsaved) {
+            e.preventDefault();
+            e.returnValue = '';
+        }
+    }
+});
+
 switchTab('terminal');
 
 // Update sidebar label from CPU to VAULT MEMORY
