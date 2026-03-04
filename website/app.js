@@ -794,14 +794,92 @@ async function handleMediaFile(file, resultContainerId, expectedType) {
 function renderDiaryTab() {
     if (!diaryState.name) {
         mainContent.innerHTML = `
-        <div class="flex items-center justify-center h-full text-zinc-600 text-sm tracking-widest font-mono">
-            <div class="text-center">
-                <div class="text-3xl mb-4">📓</div>
-                <div>No diary node active.</div>
-                <div class="mt-2 text-xs">Click <span class="text-white font-bold">+ CREATE_NODE</span> to initialize one.</div>
+        <div class="p-8 pb-32 overflow-auto h-full font-mono">
+            <div class="flex items-center text-xs text-zinc-500 mb-6 font-bold tracking-widest uppercase">
+                <span>root</span>
+                <span class="mx-2 text-zinc-700">/</span>
+                <span class="text-white">root/nodes/diary_vault</span>
+                <div class="ml-auto w-3 h-5 bg-black border border-white"></div>
+            </div>
+
+            <div class="text-center py-10">
+                <div class="text-4xl mb-4">📓</div>
+                <div class="text-zinc-500 text-sm tracking-widest mb-1">No diary node active.</div>
+                <div class="text-zinc-600 text-xs mb-8">Click <span class="text-white font-bold">+ CREATE_NODE</span> to initialize one, or unlock an existing backup below.</div>
+            </div>
+
+            <!-- Restore Zone -->
+            <div class="border border-white/20 p-5 mb-6">
+                <div class="text-[10px] font-bold tracking-widest text-white uppercase mb-3">UNLOCK ENCRYPTED DIARY</div>
+                <div class="text-zinc-500 text-xs mb-4">
+                    Drop a <code class="text-white">.ts64diary</code> backup file below and enter your access key to decrypt and view your diary entries.
+                </div>
+
+                <!-- Drop Zone -->
+                <div id="diary-restore-drop-zone"
+                     class="border border-dashed border-white/20 bg-black/40 p-8 text-center transition-all duration-200 cursor-pointer mb-4"
+                     ondragover="event.preventDefault(); this.classList.add('border-white', 'bg-white/5');"
+                     ondragleave="this.classList.remove('border-white', 'bg-white/5');"
+                     ondrop="event.preventDefault(); this.classList.remove('border-white','bg-white/5'); handleDiaryRestoreDrop(event);">
+                    <div class="text-2xl text-white/20 mb-3">📓</div>
+                    <div class="text-white font-bold tracking-widest text-xs mb-2">DROP .ts64diary FILE HERE</div>
+                    <div class="text-zinc-600 text-xs mb-4">— or —</div>
+                    <button onclick="document.getElementById('diary-restore-file-input').click()"
+                        class="bg-white text-black font-bold px-6 py-2 text-xs uppercase tracking-widest hover:bg-zinc-300 transition-colors">
+                        SELECT FILE
+                    </button>
+                    <input type="file" id="diary-restore-file-input" accept=".ts64diary,.ts64" class="hidden"
+                        onchange="handleDiaryRestoreInputChange(event)" />
+                </div>
+
+                <!-- Access Key Input -->
+                <div id="diary-restore-key-section" class="hidden">
+                    <div class="text-[10px] text-zinc-500 uppercase tracking-widest mb-2 font-bold">File loaded. Enter Access Key:</div>
+                    <div class="flex gap-2">
+                        <input type="text" id="diary-restore-key-input"
+                               placeholder="TS64-XXXX-XXXX"
+                               class="flex-1 bg-black border border-white/30 text-white px-3 py-2.5 text-xs font-mono
+                                      uppercase tracking-widest outline-none focus:border-white transition-colors"
+                               onkeydown="if(event.key==='Enter') unlockDiaryFromTab()" />
+                        <button onclick="unlockDiaryFromTab()"
+                                class="bg-white text-black font-bold px-6 py-2.5 text-[10px] uppercase tracking-widest
+                                       hover:bg-zinc-200 transition-colors shrink-0">
+                            UNLOCK
+                        </button>
+                    </div>
+                    <div class="text-zinc-600 text-[10px] mt-2" id="diary-restore-file-info"></div>
+                </div>
+
+                <!-- Result -->
+                <div id="diary-restore-result" class="mt-3"></div>
+            </div>
+
+            <!-- How It Works -->
+            <div class="border border-white/10 p-5 text-xs text-zinc-500 space-y-2">
+                <div class="text-white font-bold tracking-widest text-[10px] uppercase mb-3">HOW IT WORKS</div>
+                <div><span class="text-white">1.</span> Create a new diary node via <span class="text-white font-bold">+ CREATE_NODE</span></div>
+                <div><span class="text-white">2.</span> Write entries across different dates — everything is timestamped</div>
+                <div><span class="text-white">3.</span> Click <span class="text-white font-bold">STASH DIARY NODE</span> to encrypt with AES-GCM 256-bit</div>
+                <div><span class="text-white">4.</span> A <code class="text-white">.ts64diary</code> backup file is auto-downloaded</div>
+                <div><span class="text-white">5.</span> To restore: drop the backup file above, enter your access key, and unlock</div>
+                <div><span class="text-white">6.</span> Click <span class="text-white font-bold">OPEN IN EDITOR</span> to edit the decrypted diary and re-encrypt</div>
             </div>
         </div>`;
-        rightSidebar.innerHTML = '';
+        rightSidebar.innerHTML = `
+            <div class="h-12 border-b border-white flex items-center justify-between px-4 bg-[#030303]">
+                <span class="text-xs font-bold tracking-widest text-white uppercase">Diary Vault</span>
+                <span class="material-symbols-outlined text-sm text-zinc-500">lock</span>
+            </div>
+            <div class="flex-1 p-6 text-xs text-zinc-600 font-mono">
+                <div class="text-[10px] text-zinc-500 uppercase tracking-widest mb-3 font-bold">STATUS</div>
+                <div class="space-y-2">
+                    <div>Active Diary: <span class="text-red-400">NONE</span></div>
+                    <div>Entries: <span class="text-white">0</span></div>
+                    <div class="border-t border-white/10 pt-2 mt-3 text-zinc-600 text-[10px]">
+                        Drop a .ts64diary file or create a new diary to begin.
+                    </div>
+                </div>
+            </div>`;
         return;
     }
 
@@ -839,7 +917,7 @@ function renderDiaryTab() {
                     rows="8"
                     placeholder="Write entry for ${logDate}..."
                     spellcheck="true">${entry.text}</textarea>
-                <div class="flex gap-2 mt-2">
+                <div class="flex gap-2 mt-2 flex-wrap">
                     <button onclick="saveDiaryEntry()" id="diary-save-btn"
                             class="bg-white text-black font-bold px-4 py-1.5 text-[10px] uppercase tracking-widest hover:bg-zinc-200 transition-colors">
                         SAVE ENTRY
@@ -847,6 +925,10 @@ function renderDiaryTab() {
                     <button onclick="addDiaryEntry()"
                             class="border border-white/30 text-white font-bold px-4 py-1.5 text-[10px] uppercase tracking-widest hover:border-white transition-colors">
                         + NEW DATE
+                    </button>
+                    <button onclick="deleteDiaryEntry('${d}')"
+                            class="border border-red-500/40 text-red-400 font-bold px-4 py-1.5 text-[10px] uppercase tracking-widest hover:border-red-500 hover:bg-red-500/10 transition-colors ml-auto">
+                        DELETE ENTRY
                     </button>
                 </div>
             </div>`;
@@ -887,6 +969,24 @@ function renderDiaryTab() {
         <div class="mt-6 flex items-center font-mono text-sm text-zinc-500 mb-6">
             <span class="mr-2">tetrascript64@system:~$</span>
             <span class="w-2.5 h-5 bg-white animate-pulse block"></span>
+        </div>
+
+        <!-- Unlock Another Diary -->
+        <div class="border border-white/10 p-4 mt-4">
+            <div class="flex items-center justify-between mb-3">
+                <div class="text-[10px] font-bold tracking-widest text-zinc-500 uppercase">UNLOCK ANOTHER DIARY</div>
+            </div>
+            <div class="flex gap-2 items-center">
+                <button onclick="document.getElementById('diary-inline-restore-input').click()"
+                    class="border border-white/20 text-white font-bold px-4 py-2 text-[10px] uppercase tracking-widest
+                           hover:border-white hover:bg-white/5 transition-colors">
+                    SELECT .ts64diary FILE
+                </button>
+                <input type="file" id="diary-inline-restore-input" accept=".ts64diary,.ts64" class="hidden"
+                    onchange="handleInlineDiaryRestore(event)" />
+                <span class="text-zinc-600 text-[10px]">or drop a file onto the Diary tab when no diary is active</span>
+            </div>
+            <div id="diary-inline-restore-result" class="mt-2"></div>
         </div>
     </div>`;
 
@@ -987,16 +1087,95 @@ window.switchDiaryDate = function (dateStr) {
     renderDiaryTab();
 };
 
-// Add a new dated entry
-window.addDiaryEntry = function () {
-    const dateStr = prompt('Enter date for new entry (YYYY-MM-DD):', getTodayISO());
-    if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return;
-    if (!diaryState.entries[dateStr]) {
-        diaryState.entries[dateStr] = { text: '', stashed: false, checksum: '' };
+// Delete a diary entry by date
+window.deleteDiaryEntry = function (dateStr) {
+    const entryCount = Object.keys(diaryState.entries).length;
+    if (entryCount <= 1) {
+        alert('Cannot delete the last entry. Use ENCRYPT or create a new diary instead.');
+        return;
     }
-    diaryState.currentDate = dateStr;
+
+    const logDate = toLogDate(dateStr);
+    if (!confirm(`Delete entry [${logDate}]? This cannot be undone.`)) return;
+
+    delete diaryState.entries[dateStr];
+
+    // If we just deleted the currently selected date, switch to the most recent remaining date
+    if (diaryState.currentDate === dateStr) {
+        const remainingDates = Object.keys(diaryState.entries).sort();
+        diaryState.currentDate = remainingDates[remainingDates.length - 1] || null;
+    }
+
     localStorage.setItem('ts64_diary_draft', JSON.stringify(diaryState));
     renderDiaryTab();
+};
+
+// Add a new dated entry
+window.addDiaryEntry = function () {
+    // Use a styled inline modal instead of browser prompt
+    const existingModal = document.getElementById('diary-date-picker-modal');
+    if (existingModal) existingModal.remove();
+
+    const today = getTodayISO();
+    const modal = document.createElement('div');
+    modal.id = 'diary-date-picker-modal';
+    modal.className = 'fixed inset-0 z-[110] bg-black/80 flex items-center justify-center';
+    modal.onclick = function (e) { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = `
+        <div class="bg-[#030303] border border-white w-full max-w-sm mx-4 font-mono">
+            <div class="flex items-center justify-between border-b border-white px-4 py-3">
+                <div>
+                    <div class="text-white font-bold tracking-widest text-xs uppercase">NEW ENTRY NODE</div>
+                    <div class="text-zinc-600 text-[10px] tracking-widest mt-0.5">/ diary_vault / add_entry</div>
+                </div>
+                <button onclick="this.closest('#diary-date-picker-modal').remove()"
+                        class="text-zinc-600 hover:text-white font-bold text-sm">✕</button>
+            </div>
+            <div class="p-4 space-y-4">
+                <div>
+                    <label class="text-[10px] text-zinc-500 uppercase tracking-widest block mb-2 font-bold">
+                        Select Date
+                    </label>
+                    <input type="date" id="diary-new-date-input" value="${today}"
+                           class="w-full bg-black border border-white/30 focus:border-white text-white
+                                  px-3 py-2.5 text-xs font-mono outline-none transition-colors" />
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="(function(){
+                        var d=document.getElementById('diary-new-date-input').value;
+                        if(!d||!/^\\d{4}-\\d{2}-\\d{2}$/.test(d))return;
+                        if(diaryState.entries[d]){
+                            diaryState.currentDate=d;
+                        } else {
+                            diaryState.entries[d]={text:'',stashed:false,checksum:''};
+                            diaryState.currentDate=d;
+                        }
+                        localStorage.setItem('ts64_diary_draft',JSON.stringify(diaryState));
+                        document.getElementById('diary-date-picker-modal').remove();
+                        renderDiaryTab();
+                    })()"
+                    class="flex-1 bg-white text-black font-bold py-2.5 text-[10px] uppercase tracking-widest
+                           hover:bg-zinc-200 transition-colors">
+                        CREATE ENTRY
+                    </button>
+                    <button onclick="(function(){
+                        var d=getTodayISO();
+                        if(!diaryState.entries[d])
+                            diaryState.entries[d]={text:'',stashed:false,checksum:''};
+                        diaryState.currentDate=d;
+                        localStorage.setItem('ts64_diary_draft',JSON.stringify(diaryState));
+                        document.getElementById('diary-date-picker-modal').remove();
+                        renderDiaryTab();
+                    })()"
+                    class="border border-white/30 text-white font-bold px-4 py-2.5 text-[10px] uppercase
+                           tracking-widest hover:border-white transition-colors">
+                        TODAY
+                    </button>
+                </div>
+            </div>
+        </div>`;
+    document.body.appendChild(modal);
+    setTimeout(() => document.getElementById('diary-new-date-input')?.focus(), 50);
 };
 
 // Save current entry
@@ -1016,6 +1195,278 @@ window.saveDiaryEntry = function () {
             btn.classList.add('bg-white', 'text-black');
         }, 1500);
     }
+};
+
+// ============================================================
+// DIARY RESTORE / UNLOCK FROM TAB
+// ============================================================
+let _pendingDiaryFile = null; // holds the selected/dropped .ts64diary file
+
+window.handleDiaryRestoreDrop = function (e) {
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    _loadDiaryFile(file);
+};
+
+window.handleDiaryRestoreInputChange = function (e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    _loadDiaryFile(file);
+};
+
+function _loadDiaryFile(file) {
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith('.ts64diary') && !lowerName.endsWith('.ts64')) {
+        const resultEl = document.getElementById('diary-restore-result');
+        if (resultEl) resultEl.innerHTML = `<div class="text-red-500 text-xs p-2 border border-red-500/30">Error: Expected a .ts64diary file.</div>`;
+        return;
+    }
+    _pendingDiaryFile = file;
+
+    // Show the key section
+    const keySection = document.getElementById('diary-restore-key-section');
+    if (keySection) keySection.classList.remove('hidden');
+
+    const fileInfo = document.getElementById('diary-restore-file-info');
+    if (fileInfo) fileInfo.textContent = `File: ${file.name} (${(file.size / 1024).toFixed(1)}KB)`;
+
+    // Update drop zone to show loaded state
+    const dropZone = document.getElementById('diary-restore-drop-zone');
+    if (dropZone) {
+        dropZone.innerHTML = `
+            <div class="text-2xl mb-2">✅</div>
+            <div class="text-white font-bold tracking-widest text-xs">${file.name}</div>
+            <div class="text-zinc-500 text-[10px] mt-1">${(file.size / 1024).toFixed(1)}KB loaded · Enter access key below</div>`;
+    }
+
+    // Clear any previous result
+    const resultEl = document.getElementById('diary-restore-result');
+    if (resultEl) resultEl.innerHTML = '';
+
+    // Auto-focus the key input
+    setTimeout(() => document.getElementById('diary-restore-key-input')?.focus(), 50);
+}
+
+// Inline restore from active diary view — resets state and opens unlock UI
+window.handleInlineDiaryRestore = function (e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith('.ts64diary') && !lowerName.endsWith('.ts64')) {
+        const resultEl = document.getElementById('diary-inline-restore-result');
+        if (resultEl) resultEl.innerHTML = `<div class="text-red-500 text-xs p-2">Error: Expected a .ts64diary file.</div>`;
+        return;
+    }
+    // Reset current diary state so we go to the empty/unlock view
+    resetDiaryState();
+    localStorage.removeItem('ts64_diary_draft');
+    renderDiaryTab();
+    // After re-render, load the file into the restore flow
+    setTimeout(() => _loadDiaryFile(file), 100);
+};
+
+window.unlockDiaryFromTab = async function () {
+    const resultEl = document.getElementById('diary-restore-result');
+    if (!resultEl) return;
+
+    if (!_pendingDiaryFile) {
+        resultEl.innerHTML = `<div class="text-red-500 text-xs p-2">Error: No file loaded. Drop a .ts64diary file first.</div>`;
+        return;
+    }
+
+    const keyInput = document.getElementById('diary-restore-key-input');
+    const pwd = (keyInput?.value || '').trim().toUpperCase();
+    if (!pwd || !/^TS64-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(pwd)) {
+        resultEl.innerHTML = `<div class="text-red-500 text-xs p-2 border border-red-500/30">Invalid key format. Expected: TS64-XXXX-XXXX</div>`;
+        return;
+    }
+
+    resultEl.innerHTML = `<div class="text-zinc-500 animate-pulse text-xs tracking-widest uppercase p-3">Decrypting diary...</div>`;
+
+    try {
+        const buf = await _pendingDiaryFile.arrayBuffer();
+        if (buf.byteLength < 28) throw new Error('File too small to be a valid backup');
+
+        // Verify TS64 magic header
+        const magic = new Uint8Array(buf.slice(0, 4));
+        if (magic[0] !== 0x54 || magic[1] !== 0x53 || magic[2] !== 0x36 || magic[3] !== 0x34) {
+            throw new Error('Invalid file — does not contain TS64 magic header');
+        }
+
+        // Extract salt from header and derive key
+        const hdrArr = new Uint8Array(buf.slice(0, 28));
+        const salt = hdrArr.slice(4, 20);
+        const key = await deriveKey(pwd, salt);
+
+        // Parse chunk envelopes starting at byte 28
+        const decryptedParts = [];
+        let offset = 28;
+        let chunkIdx = 0;
+        while (offset + 20 <= buf.byteLength) {
+            const cv = new DataView(buf, offset, 20);
+            const ctLen = cv.getUint32(16, true);
+            const envelopeSize = 20 + ctLen;
+            if (ctLen <= 0 || ctLen > 100 * 1024 * 1024 || offset + envelopeSize > buf.byteLength) break;
+
+            const ev = new Uint8Array(buf.slice(offset, offset + envelopeSize));
+            const iv = ev.slice(4, 16);
+            const ciphertext = ev.slice(20, 20 + ctLen);
+
+            const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+            decryptedParts.push(new Uint8Array(plain));
+            offset += envelopeSize;
+            chunkIdx++;
+        }
+
+        if (decryptedParts.length === 0) throw new Error('No chunks were decrypted — wrong key?');
+
+        // Merge decrypted parts
+        const totalLen = decryptedParts.reduce((s, p) => s + p.byteLength, 0);
+        const merged = new Uint8Array(totalLen);
+        let pos = 0;
+        for (const part of decryptedParts) { merged.set(part, pos); pos += part.byteLength; }
+
+        // Parse JSON diary
+        const diaryStr = new TextDecoder('utf-8', { fatal: true }).decode(merged);
+        const diaryObj = JSON.parse(diaryStr);
+
+        // Build the interactive date-list view
+        const sortedDates = Object.keys(diaryObj.entries).sort();
+        const containerId = 'diary-tab-unlock-' + Date.now();
+
+        const rowsHtml = sortedDates.map((d, idx) => {
+            const logDate = toLogDate(d);
+            const entry = diaryObj.entries[d];
+            const text = (typeof entry === 'string' ? entry : entry.text) || '(empty entry)';
+            const escapedText = text.replace(/</g, '&lt;');
+            const hasContent = text.trim().length > 0 && text !== '(empty entry)';
+            const sizeKb = Math.ceil((text.length * 2) / 1024) || 1;
+            const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
+            const rowId = `${containerId}-row-${idx}`;
+            const textId = `${containerId}-text-${idx}`;
+
+            return `
+            <div id="${rowId}" class="group">
+                <div class="flex items-center justify-between py-2 px-3 -mx-3 cursor-pointer transition-all duration-200
+                            hover:bg-white/10 text-zinc-400 hover:text-white font-mono text-sm"
+                     onclick="(function(){
+                         var el=document.getElementById('${textId}');
+                         var arrow=document.getElementById('${rowId}-arrow');
+                         if(el.classList.contains('hidden')){
+                             el.classList.remove('hidden');
+                             arrow.textContent='▼';
+                         } else {
+                             el.classList.add('hidden');
+                             arrow.textContent='▶';
+                         }
+                     })()">
+                    <div class="flex items-center gap-2">
+                        <span id="${rowId}-arrow" class="text-[10px] text-zinc-600 w-3">▶</span>
+                        <span class="font-bold">[${logDate}]</span>
+                        ${hasContent
+                    ? `<span class="text-[10px] text-zinc-600 font-normal ml-2">${wordCount} words · ${sizeKb}KB</span>`
+                    : `<span class="text-[10px] text-zinc-700 font-normal ml-2">empty</span>`
+                }
+                    </div>
+                    <span class="text-[10px] text-zinc-700 group-hover:text-zinc-500 transition-colors">${formatDisplayDate(d)}</span>
+                </div>
+                <div id="${textId}" class="hidden border-l-2 border-white ml-1 pl-4 py-3 mb-2 transition-all">
+                    <div class="text-zinc-300 text-xs leading-relaxed whitespace-pre-wrap break-words font-mono">${escapedText}</div>
+                </div>
+            </div>`;
+        }).join('');
+
+        // Store the decrypted diary object globally so OPEN IN EDITOR can access it
+        window._lastDecryptedDiary = diaryObj;
+
+        resultEl.innerHTML = `
+            <div class="border border-white p-4 relative font-mono mt-2 mb-4">
+                <div class="absolute -top-px -left-px w-2 h-2 border-t-2 border-l-2 border-white bg-black"></div>
+                <div class="absolute -top-px -right-px w-2 h-2 border-t-2 border-r-2 border-white bg-black"></div>
+                <div class="absolute -bottom-px -left-px w-2 h-2 border-b-2 border-l-2 border-white bg-black"></div>
+                <div class="absolute -bottom-px -right-px w-2 h-2 border-b-2 border-r-2 border-white bg-black"></div>
+
+                <div class="flex items-center justify-between mb-4 border-b border-white/20 pb-3">
+                    <div>
+                        <h3 class="text-white font-bold tracking-widest uppercase text-base">📓 ${diaryObj.name || 'Diary'}</h3>
+                        <div class="text-zinc-500 text-[10px] mt-1">
+                            by <span class="text-white">${diaryObj.author || 'Unknown'}</span> ·
+                            <span class="text-white">${sortedDates.length}</span> entries
+                        </div>
+                    </div>
+                    <div class="text-[10px] text-zinc-600 border border-white/20 px-2 py-1 text-right shrink-0">
+                        AES-GCM-256<br>DECRYPTED
+                    </div>
+                </div>
+
+                <div class="text-[10px] text-zinc-600 uppercase tracking-widest mb-3 font-bold">
+                    Click a date to expand entry ▼
+                </div>
+                <div class="space-y-0 divide-y divide-white/10">${rowsHtml}</div>
+
+                <div class="mt-4 pt-3 border-t border-white/10 flex gap-3 flex-wrap">
+                    <button onclick="(function(){
+                        document.querySelectorAll('[id^=\\'${containerId}-text-\\']').forEach(function(el){el.classList.remove('hidden')});
+                        document.querySelectorAll('[id$=\\'-arrow\\']').forEach(function(el){if(el.id.startsWith('${containerId}')){el.textContent='▼'}});
+                    })()" class="text-[10px] text-zinc-500 hover:text-white border border-white/20 px-3 py-1 tracking-widest hover:border-white transition-colors">
+                        EXPAND ALL
+                    </button>
+                    <button onclick="(function(){
+                        document.querySelectorAll('[id^=\\'${containerId}-text-\\']').forEach(function(el){el.classList.add('hidden')});
+                        document.querySelectorAll('[id$=\\'-arrow\\']').forEach(function(el){if(el.id.startsWith('${containerId}')){el.textContent='▶'}});
+                    })()" class="text-[10px] text-zinc-500 hover:text-white border border-white/20 px-3 py-1 tracking-widest hover:border-white transition-colors">
+                        COLLAPSE ALL
+                    </button>
+                    <button onclick="openDecryptedDiaryInEditor()"
+                        class="ml-auto bg-white text-black font-bold px-5 py-1.5 text-[10px] uppercase tracking-widest hover:bg-zinc-200 transition-colors">
+                        OPEN IN EDITOR
+                    </button>
+                </div>
+            </div>`;
+
+    } catch (err) {
+        resultEl.innerHTML = `
+            <div class="text-red-500 p-3 border border-red-500/30 bg-red-500/10 text-xs mb-2">
+                Access Denied: ${err.message}
+            </div>
+            <div class="text-zinc-600 text-[10px] uppercase">
+                Check your access key and ensure the file is a valid .ts64diary backup.
+            </div>`;
+    }
+};
+
+// Open the last decrypted diary in the editor
+window.openDecryptedDiaryInEditor = function () {
+    const diaryObj = window._lastDecryptedDiary;
+    if (!diaryObj) {
+        alert('No decrypted diary data found. Please unlock a diary first.');
+        return;
+    }
+
+    // Populate diaryState
+    diaryState.name = diaryObj.name || 'Restored Diary';
+    diaryState.author = diaryObj.author || 'Unknown';
+    diaryState.createdAt = diaryObj.createdAt || new Date().toISOString();
+    diaryState.entries = {};
+
+    const dates = Object.keys(diaryObj.entries).sort();
+    dates.forEach(d => {
+        const entry = diaryObj.entries[d];
+        diaryState.entries[d] = {
+            text: (typeof entry === 'string' ? entry : entry.text) || '',
+            stashed: false,
+            checksum: ''
+        };
+    });
+
+    diaryState.currentDate = dates[dates.length - 1] || null;
+
+    // Save draft and re-render
+    localStorage.setItem('ts64_diary_draft', JSON.stringify(diaryState));
+    window._lastDecryptedDiary = null;
+    _pendingDiaryFile = null;
+    renderDiaryTab();
+    renderSidebar();
 };
 
 // ============================================================
@@ -1177,7 +1628,7 @@ async function renderDashboardTab() {
         </div>
 
         <!-- Stat Cards -->
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
             <div class="border border-white/20 bg-black/40 p-4 flex flex-col gap-1 hover:border-white/40 transition-colors cursor-pointer" onclick="switchTab('terminal')">
                 <div class="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">Text Stashes</div>
                 <div class="text-white text-3xl font-bold">${summary.textCount}</div>
@@ -1192,6 +1643,11 @@ async function renderDashboardTab() {
                 <div class="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">Video Files</div>
                 <div class="text-white text-3xl font-bold">${summary.videoCount}</div>
                 <div class="text-zinc-600 text-[10px]">encrypted videos exported</div>
+            </div>
+            <div class="border border-white/20 bg-black/40 p-4 flex flex-col gap-1 hover:border-white/40 transition-colors cursor-pointer" onclick="switchTab('diary')">
+                <div class="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">Diary Nodes</div>
+                <div class="text-white text-3xl font-bold">${summary.diaryCount}</div>
+                <div class="text-zinc-600 text-[10px]">encrypted diary vaults</div>
             </div>
             <div class="border border-white/20 bg-black/40 p-4 flex flex-col gap-1">
                 <div class="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">Total Stashes</div>
@@ -1219,7 +1675,7 @@ async function renderDashboardTab() {
         <!-- Quick Actions -->
         <div>
             <div class="text-[10px] font-bold tracking-[0.2em] text-zinc-600 uppercase mb-3">QUICK ACTIONS</div>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
                 <button onclick="switchTab('terminal')"
                     class="border border-white/20 bg-black/40 p-4 text-left hover:border-white/50 transition-colors group">
                     <div class="text-white font-bold text-xs tracking-widest group-hover:text-zinc-300">→ OPEN TERMINAL</div>
@@ -1234,6 +1690,11 @@ async function renderDashboardTab() {
                     class="border border-white/20 bg-black/40 p-4 text-left hover:border-white/50 transition-colors group">
                     <div class="text-white font-bold text-xs tracking-widest group-hover:text-zinc-300">→ ENCRYPT VIDEO</div>
                     <div class="text-zinc-600 text-[10px] mt-1">MP4, WebM → classified .ts64vid file</div>
+                </button>
+                <button onclick="openCreateNodeModal()"
+                    class="border border-white/20 bg-black/40 p-4 text-left hover:border-white/50 transition-colors group">
+                    <div class="text-white font-bold text-xs tracking-widest group-hover:text-zinc-300">→ CREATE DIARY NODE</div>
+                    <div class="text-zinc-600 text-[10px] mt-1">Date-indexed encrypted journal vault</div>
                 </button>
             </div>
         </div>
@@ -1262,6 +1723,9 @@ async function renderDashboardTab() {
             </div>
             <div class="flex justify-between text-zinc-500 uppercase tracking-widest">
                 <span>Video Exported</span><span class="text-white font-bold">${summary.videoCount}</span>
+            </div>
+            <div class="flex justify-between text-zinc-500 uppercase tracking-widest">
+                <span>Diary Nodes</span><span class="text-white font-bold">${summary.diaryCount}</span>
             </div>
             <div class="flex justify-between text-zinc-500 uppercase tracking-widest border-t border-white/10 pt-3">
                 <span>Total Objects</span><span class="text-white font-bold">${summary.totalStashes}</span>
@@ -2081,13 +2545,48 @@ function initTerminalEngine() {
                             const diaryObj = JSON.parse(diaryStr);
 
                             const sortedDates = Object.keys(diaryObj.entries).sort();
-                            const rowsHtml = sortedDates.map(d => {
+                            const containerId = 'diary-unlock-' + Date.now();
+
+                            // Build date-only rows (text hidden by default)
+                            const rowsHtml = sortedDates.map((d, idx) => {
                                 const logDate = toLogDate(d);
-                                const text = diaryObj.entries[d].text || '(empty entry)';
+                                const entry = diaryObj.entries[d];
+                                const text = (typeof entry === 'string' ? entry : entry.text) || '(empty entry)';
+                                const escapedText = text.replace(/</g, '&lt;');
+                                const hasContent = text.trim().length > 0 && text !== '(empty entry)';
+                                const sizeKb = Math.ceil((text.length * 2) / 1024) || 1;
+                                const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
+                                const rowId = `${containerId}-row-${idx}`;
+                                const textId = `${containerId}-text-${idx}`;
+
                                 return `
-                                <div class="border-l-2 border-white pl-3 py-2 -ml-3 font-mono mt-1 mb-3">
-                                    <div class="text-white text-sm font-bold mb-2">&gt; [${logDate}]</div>
-                                    <div class="text-zinc-300 text-xs leading-relaxed whitespace-pre-wrap">${text.replace(/</g, '&lt;')}</div>
+                                <div id="${rowId}" class="group">
+                                    <div class="flex items-center justify-between py-2 px-3 -mx-3 cursor-pointer transition-all duration-200
+                                                hover:bg-white/10 text-zinc-400 hover:text-white font-mono text-sm"
+                                         onclick="(function(){
+                                             var el=document.getElementById('${textId}');
+                                             var arrow=document.getElementById('${rowId}-arrow');
+                                             if(el.classList.contains('hidden')){
+                                                 el.classList.remove('hidden');
+                                                 arrow.textContent='▼';
+                                             } else {
+                                                 el.classList.add('hidden');
+                                                 arrow.textContent='▶';
+                                             }
+                                         })()">
+                                        <div class="flex items-center gap-2">
+                                            <span id="${rowId}-arrow" class="text-[10px] text-zinc-600 w-3">▶</span>
+                                            <span class="font-bold">[${logDate}]</span>
+                                            ${hasContent
+                                        ? `<span class="text-[10px] text-zinc-600 font-normal ml-2">${wordCount} words · ${sizeKb}KB</span>`
+                                        : `<span class="text-[10px] text-zinc-700 font-normal ml-2">empty</span>`
+                                    }
+                                        </div>
+                                        <span class="text-[10px] text-zinc-700 group-hover:text-zinc-500 transition-colors">${formatDisplayDate(d)}</span>
+                                    </div>
+                                    <div id="${textId}" class="hidden border-l-2 border-white ml-1 pl-4 py-3 mb-2 transition-all">
+                                        <div class="text-zinc-300 text-xs leading-relaxed whitespace-pre-wrap break-words font-mono">${escapedText}</div>
+                                    </div>
                                 </div>`;
                             }).join('');
 
@@ -2097,9 +2596,40 @@ function initTerminalEngine() {
                                     <div class="absolute -top-px -right-px w-2 h-2 border-t-2 border-r-2 border-white bg-black"></div>
                                     <div class="absolute -bottom-px -left-px w-2 h-2 border-b-2 border-l-2 border-white bg-black"></div>
                                     <div class="absolute -bottom-px -right-px w-2 h-2 border-b-2 border-r-2 border-white bg-black"></div>
-                                    <h3 class="text-white font-bold tracking-widest uppercase mb-4 text-base">${diaryObj.name}</h3>
-                                    <div class="text-zinc-500 text-xs mb-4">Author: <span class="text-white">${diaryObj.author}</span> | Entries: <span class="text-white">${sortedDates.length}</span> | Checksum: <span class="text-white">${diaryMeta.checksum}</span></div>
-                                    <div class="space-y-2 relative">${rowsHtml}</div>
+
+                                    <div class="flex items-center justify-between mb-4 border-b border-white/20 pb-3">
+                                        <div>
+                                            <h3 class="text-white font-bold tracking-widest uppercase text-base">📓 ${diaryObj.name}</h3>
+                                            <div class="text-zinc-500 text-[10px] mt-1">
+                                                by <span class="text-white">${diaryObj.author}</span> ·
+                                                <span class="text-white">${sortedDates.length}</span> entries ·
+                                                Checksum: <span class="text-white">${diaryMeta.checksum}</span>
+                                            </div>
+                                        </div>
+                                        <div class="text-[10px] text-zinc-600 border border-white/20 px-2 py-1 text-right shrink-0">
+                                            AES-GCM-256<br>DECRYPTED
+                                        </div>
+                                    </div>
+
+                                    <div class="text-[10px] text-zinc-600 uppercase tracking-widest mb-3 font-bold">
+                                        Click a date to expand entry ▼
+                                    </div>
+                                    <div class="space-y-0 divide-y divide-white/10">${rowsHtml}</div>
+
+                                    <div class="mt-4 pt-3 border-t border-white/10 flex gap-3">
+                                        <button onclick="(function(){
+                                            document.querySelectorAll('[id^=\\'${containerId}-text-\\']').forEach(function(el){el.classList.remove('hidden')});
+                                            document.querySelectorAll('[id$=\\'-arrow\\']').forEach(function(el){if(el.id.startsWith('${containerId}')){el.textContent='▼'}});
+                                        })()" class="text-[10px] text-zinc-500 hover:text-white border border-white/20 px-3 py-1 tracking-widest hover:border-white transition-colors">
+                                            EXPAND ALL
+                                        </button>
+                                        <button onclick="(function(){
+                                            document.querySelectorAll('[id^=\\'${containerId}-text-\\']').forEach(function(el){el.classList.add('hidden')});
+                                            document.querySelectorAll('[id$=\\'-arrow\\']').forEach(function(el){if(el.id.startsWith('${containerId}')){el.textContent='▶'}});
+                                        })()" class="text-[10px] text-zinc-500 hover:text-white border border-white/20 px-3 py-1 tracking-widest hover:border-white transition-colors">
+                                            COLLAPSE ALL
+                                        </button>
+                                    </div>
                                 </div>`;
                         } catch (err) {
                             resWrap.innerHTML = `<span class="text-red-500 p-2 block border border-red-500/50 bg-red-500/10">Access Denied: ${err.message}</span>`;
@@ -2268,18 +2798,41 @@ function initTerminalEngine() {
                         resWrap.innerHTML = `<span class="text-red-500">Export Failed: ${err.message}</span>`;
                     }
                 } else {
-                    // Standard stash export
-                    const data = await dbGet('TS64_STASH_' + id);
-                    if (!data) {
-                        resWrap.innerHTML = `<span class="text-red-500">Export Failed: No stash found for key ${id}.</span>`;
-                    } else {
-                        const blob = new Blob([data], { type: 'application/octet-stream' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url; a.download = `backup_${id}.ts64`;
-                        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-                        URL.revokeObjectURL(url);
-                        resWrap.innerHTML = `<div class="text-white font-bold mb-2">BACKUP EXPORTED: backup_${id}.ts64</div><div class="text-zinc-500 text-xs">Drag this file back into the site to restore.</div>`;
+                    // Standard stash export — stitch header + all chunks into one binary file
+                    try {
+                        const stashMeta = await dbGet('TS64_STASH_' + id);
+                        if (!stashMeta) {
+                            resWrap.innerHTML = `<span class="text-red-500">Export Failed: No stash found for key ${id}.</span>`;
+                        } else if (stashMeta && typeof stashMeta === 'object' && stashMeta.v === 2) {
+                            // V2 chunked — stitch header + all chunk envelopes together
+                            const headerRaw = await dbGet('TS64_STASH_' + id + '_header');
+                            if (!headerRaw) throw new Error('Header chunk missing — cannot export');
+                            const dlParts = [headerRaw];
+                            for (let ci = 0; ci < stashMeta.chunkCount; ci++) {
+                                const chunkRaw = await dbGet(`TS64_STASH_${id}_chunk_${ci}`);
+                                if (!chunkRaw) throw new Error(`Data chunk ${ci} missing`);
+                                dlParts.push(chunkRaw);
+                            }
+                            // NO trailing type tag — the TS64 magic header is already sufficient
+                            const blob = new Blob(dlParts, { type: 'application/octet-stream' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url; a.download = `backup_${id}.ts64`;
+                            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                            setTimeout(() => URL.revokeObjectURL(url), 60000);
+                            resWrap.innerHTML = `<div class="text-white font-bold mb-2">BACKUP EXPORTED: backup_${id}.ts64</div><div class="text-zinc-500 text-xs">Drag this file back into the terminal to restore.</div>`;
+                        } else {
+                            // Legacy V1 raw blob — export as-is
+                            const blob = new Blob([stashMeta], { type: 'application/octet-stream' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url; a.download = `backup_${id}.ts64`;
+                            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                            URL.revokeObjectURL(url);
+                            resWrap.innerHTML = `<div class="text-white font-bold mb-2">BACKUP EXPORTED: backup_${id}.ts64</div><div class="text-zinc-500 text-xs">Legacy format — drag back to restore.</div>`;
+                        }
+                    } catch (err) {
+                        resWrap.innerHTML = `<span class="text-red-500">Export Failed: ${err.message}</span>`;
                     }
                 }
             }
@@ -2321,6 +2874,7 @@ function initTerminalEngine() {
         if (!file) return;
 
         const lowerName = file.name.toLowerCase();
+        const isDiaryBackup = lowerName.endsWith('.ts64diary');
         const isBackup = lowerName.endsWith('.ts64') || lowerName.endsWith('.ts64vid');
         const isAudio = file.type.startsWith('audio/') || ['.mp3', '.wav', '.ogg', '.flac', '.aac'].some(x => lowerName.endsWith(x));
         const isVideo = file.type.startsWith('video/') || ['.mp4', '.webm', '.mkv', '.mov', '.avi'].some(x => lowerName.endsWith(x));
@@ -2330,12 +2884,113 @@ function initTerminalEngine() {
         wrp.id = 'drop-result-' + Date.now();
         outputContainer.appendChild(wrp);
 
-        if (isBackup) {
-            const id = file.name.split('_')[1]?.split('.')[0];
+        if (isDiaryBackup) {
+            const idMatch = file.name.match(/node_([A-Z0-9]{4})\.ts64diary$/i) || file.name.match(/([A-Z0-9]{4})\.ts64diary$/i);
+            const id = idMatch ? idMatch[1].toUpperCase() : null;
+            if (!id) { wrp.innerHTML = `<span class="text-red-500">Malformed diary backup filename.</span>`; return; }
+
+            try {
+                const buf = await file.arrayBuffer();
+                if (buf.byteLength < 28) throw new Error("Invalid diary backup: file too small");
+
+                const hdrRaw = new Uint8Array(buf.slice(0, 28));
+                if (hdrRaw[0] !== 0x54 || hdrRaw[1] !== 0x53 || hdrRaw[2] !== 0x36 || hdrRaw[3] !== 0x34) {
+                    throw new Error("Invalid magic pattern in diary structure");
+                }
+
+                await dbSet('TS64_DIARY_' + id + '_header', hdrRaw);
+
+                let offset = 28;
+                let chunkCount = 0;
+                while (offset < buf.byteLength) {
+                    if (offset + 20 > buf.byteLength) break;
+                    const cv = new DataView(buf.slice(offset, offset + 20));
+                    const ctLen = cv.getUint32(16, true);
+                    const chunkSize = 20 + ctLen;
+                    if (offset + chunkSize > buf.byteLength) break;
+
+                    const env = new Uint8Array(buf.slice(offset, offset + chunkSize));
+                    await dbSet(`TS64_DIARY_${id}_chunk_${chunkCount}`, env);
+                    offset += chunkSize;
+                    chunkCount++;
+                }
+
+                await dbSet('TS64_DIARY_' + id, {
+                    type: 'diary',
+                    chunkCount: chunkCount,
+                    checksum: 'RESTORED',
+                    name: 'RESTORED DIARY NODE',
+                    author: 'UNKNOWN',
+                    v: 2
+                });
+
+                wrp.innerHTML = `<div class="font-bold text-white mb-2 tracking-widest text-[10px]">DIARY BACKUP RESTORED</div><div class="text-zinc-500 text-xs">Key chunk ID processed: <span class="text-white">${id}</span>. You may now unlock.</div>`;
+            } catch (err) {
+                wrp.innerHTML = `<span class="text-red-500">Diary restore error: ${err.message}</span>`;
+            }
+        } else if (isBackup) {
+            // .ts64 backup file — extract id from filename
+            const idMatch = file.name.match(/backup_([A-Z0-9]{4})\.ts64$/i) || file.name.match(/([A-Z0-9]{4})\.ts64$/i);
+            const id = (idMatch ? idMatch[1] : file.name.split('_')[1]?.split('.')[0] || file.name.split('.')[0])?.toUpperCase();
             if (!id) { wrp.innerHTML = `<span class="text-red-500">Malformed backup filename.</span>`; return; }
-            const buf = await file.arrayBuffer();
-            await dbSet('TS64_STASH_' + id, new Uint8Array(buf));
-            wrp.innerHTML = `<div class="font-bold text-white mb-2">BACKUP RESTORED</div><div class="text-zinc-500">Key: ${id}</div>`;
+            try {
+                const buf = await file.arrayBuffer();
+
+                // Check for V2 magic header: bytes 0-3 = 0x54 0x53 0x36 0x34 ('TS64')
+                const magic = new Uint8Array(buf.slice(0, 4));
+                const hasV2Magic = magic[0] === 0x54 && magic[1] === 0x53 && magic[2] === 0x36 && magic[3] === 0x34;
+
+                if (hasV2Magic && buf.byteLength >= 28) {
+                    // V2 chunked binary — split into header + chunks
+                    const hdrRaw = new Uint8Array(buf.slice(0, 28));
+                    await dbSet('TS64_STASH_' + id + '_header', hdrRaw);
+
+                    // Greedily walk chunk envelopes starting at byte 28
+                    // Envelope format: [4B index][12B IV][4B ctLen][ctLen bytes ciphertext]
+                    let offset = 28;
+                    let chunkCount = 0;
+                    while (offset + 20 <= buf.byteLength) {
+                        // Read ciphertext length from envelope header
+                        const cv = new DataView(buf, offset, 20);
+                        const ctLen = cv.getUint32(16, true);
+                        const envelopeSize = 20 + ctLen;
+
+                        // Validate we have enough bytes for the full envelope
+                        if (ctLen <= 0 || ctLen > 100 * 1024 * 1024 || offset + envelopeSize > buf.byteLength) break;
+
+                        const env = new Uint8Array(buf.slice(offset, offset + envelopeSize));
+                        await dbSet(`TS64_STASH_${id}_chunk_${chunkCount}`, env);
+                        offset += envelopeSize;
+                        chunkCount++;
+                    }
+
+                    if (chunkCount === 0) {
+                        wrp.innerHTML = `<span class="text-red-500">Backup appears corrupted: valid header but no readable chunks.</span>`;
+                        return;
+                    }
+
+                    // Store V2 metadata so unlock recognizes this as chunked
+                    await dbSet('TS64_STASH_' + id, { type: 'text', chunkCount, totalSize: buf.byteLength, v: 2 });
+                    await incrementStat('text');
+                    wrp.innerHTML = `<div class="font-bold text-white mb-2 tracking-widest text-[10px]">BACKUP RESTORED</div><div class="text-zinc-500 text-xs">Key: <span class="text-white">${id}</span> · ${chunkCount} chunk(s) imported. Use <span class="text-white">unlock TS64-${id}-XXXX</span> to decrypt.</div>`;
+                } else {
+                    // Not V2 binary — check if it's a corrupt old-format export (JSON metadata)
+                    try {
+                        const testStr = new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array(buf.slice(0, Math.min(100, buf.byteLength))));
+                        if (testStr.startsWith('{') && testStr.includes('"type"')) {
+                            wrp.innerHTML = `<span class="text-red-500 block mb-1">This backup file contains metadata only, not encrypted data.</span><span class="text-zinc-500 text-[10px]">It was exported with an old version of TetraScript. You need to re-stash and re-export the data.</span>`;
+                            return;
+                        }
+                    } catch (e) { /* not JSON */ }
+
+                    // Legacy V1 raw blob — store directly
+                    await dbSet('TS64_STASH_' + id, new Uint8Array(buf));
+                    await incrementStat('text');
+                    wrp.innerHTML = `<div class="font-bold text-white mb-2">BACKUP RESTORED (legacy)</div><div class="text-zinc-500">Key: ${id}</div>`;
+                }
+            } catch (err) {
+                wrp.innerHTML = `<span class="text-red-500">Restore error: ${err.message}</span>`;
+            }
         } else if (isAudio) {
             wrp.innerHTML = `
                 <div class="p-3 border border-white/20 bg-black/40">
@@ -2344,16 +2999,16 @@ function initTerminalEngine() {
                         <div id="enc-progress-bar" class="bg-white h-1 transition-all duration-300" style="width:0%"></div>
                     </div>
                 </div>`;
-            const pwd = generatePassword();
-            const id = pwd.split('-')[1];
+            const audioPwd = generatePassword();
+            const audioId = audioPwd.split('-')[1];
             try {
                 const salt = crypto.getRandomValues(new Uint8Array(16));
-                const key = await deriveKey(pwd, salt);
+                const key = await deriveKey(audioPwd, salt);
                 const hdr = new Uint8Array(28);
                 hdr.set([0x54, 0x53, 0x36, 0x34], 0);
                 hdr.set(salt, 4);
                 new DataView(hdr.buffer).setBigUint64(20, BigInt(file.size), true);
-                await dbSet('TS64_STASH_' + id + '_header', hdr);
+                await dbSet('TS64_STASH_' + audioId + '_header', hdr);
 
                 let offset = 0, chunkIndex = 0, bytesProcessed = 0;
                 while (offset < file.size) {
@@ -2366,16 +3021,16 @@ function initTerminalEngine() {
                     env.set(iv, 4);
                     cv.setUint32(16, ct.byteLength, true);
                     env.set(new Uint8Array(ct), 20);
-                    await dbSet(`TS64_STASH_${id}_chunk_${chunkIndex}`, env);
+                    await dbSet(`TS64_STASH_${audioId}_chunk_${chunkIndex}`, env);
                     offset += CHUNK_SIZE; bytesProcessed += ab.byteLength; chunkIndex++;
                     updateProgress((bytesProcessed / file.size) * 100, '');
                 }
-                await dbSet('TS64_STASH_' + id, { type: 'audio', mime: file.type || 'audio/mpeg', name: file.name, chunkCount: chunkIndex, totalSize: file.size, v: 2 });
+                await dbSet('TS64_STASH_' + audioId, { type: 'audio', mime: file.type || 'audio/mpeg', name: file.name, chunkCount: chunkIndex, totalSize: file.size, v: 2 });
                 await incrementStat('audio');
                 wrp.innerHTML = `
                     <div class="font-bold text-white mb-2 tracking-wider border-b border-white/10 pb-2">AUDIO STASH SECURED</div>
                     <div class="text-zinc-500 mb-1">File: <span class="text-white">${file.name}</span></div>
-                    ${keyCardHTML(pwd)}`;
+                    ${keyCardHTML(audioPwd)}`;
                 renderSidebar();
             } catch (err) { wrp.innerHTML = `<span class="text-red-500">Fault: ${err.message}</span>`; }
         } else if (isVideo) {
@@ -2386,11 +3041,11 @@ function initTerminalEngine() {
                         <div id="enc-progress-bar" class="bg-white h-1 transition-all duration-300" style="width:0%"></div>
                     </div>
                 </div>`;
-            const pwd = generatePassword();
-            const id = pwd.split('-')[1];
+            const videoPwd = generatePassword();
+            const videoId = videoPwd.split('-')[1];
             try {
                 const salt = crypto.getRandomValues(new Uint8Array(16));
-                const key = await deriveKey(pwd, salt);
+                const key = await deriveKey(videoPwd, salt);
                 const hdr = new Uint8Array(28);
                 hdr.set([0x54, 0x53, 0x36, 0x34], 0);
                 hdr.set(salt, 4);
@@ -2415,15 +3070,15 @@ function initTerminalEngine() {
                 const blob = new Blob(blobParts, { type: 'application/octet-stream' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
-                a.href = url; a.download = `classified_footage_${id}.ts64vid`;
+                a.href = url; a.download = `classified_footage_${videoId}.ts64vid`;
                 document.body.appendChild(a); a.click(); document.body.removeChild(a);
                 setTimeout(() => URL.revokeObjectURL(url), 60000);
 
                 await incrementStat('video');
                 wrp.innerHTML = `
                                 <div class="font-bold text-white mb-2 tracking-wider border-b border-white/10 pb-2">VIDEO STASH EXPORTED</div>
-                                    <div class="text-zinc-500 mb-1">Output: <span class="text-white">classified_footage_${id}.ts64vid</span></div>
-                    ${keyCardHTML(pwd)} `;
+                                    <div class="text-zinc-500 mb-1">Output: <span class="text-white">classified_footage_${videoId}.ts64vid</span></div>
+                    ${keyCardHTML(videoPwd)} `;
                 renderSidebar();
             } catch (err) { wrp.innerHTML = `<span class="text-red-500">Fault: ${err.message}</span>`; }
         } else {
