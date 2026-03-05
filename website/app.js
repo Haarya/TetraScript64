@@ -804,8 +804,13 @@ function renderDiaryTab() {
 
             <div class="text-center py-10">
                 <div class="text-4xl mb-4">📓</div>
-                <div class="text-zinc-500 text-sm tracking-widest mb-1">No diary node active.</div>
-                <div class="text-zinc-600 text-xs mb-8">Click <span class="text-white font-bold">+ CREATE_NODE</span> to initialize one, or unlock an existing backup below.</div>
+                <div class="text-zinc-500 text-sm tracking-widest mb-3">No diary node active.</div>
+                <button onclick="openCreateNodeModal()"
+                    class="bg-white text-black font-bold px-8 py-3 text-xs uppercase tracking-widest
+                           hover:bg-zinc-200 active:scale-95 transition-all duration-150">
+                    + ADD NODE
+                </button>
+                <div class="text-zinc-600 text-[10px] mt-4">or unlock an existing encrypted diary below</div>
             </div>
 
             <!-- Restore Zone -->
@@ -857,7 +862,7 @@ function renderDiaryTab() {
             <!-- How It Works -->
             <div class="border border-white/10 p-5 text-xs text-zinc-500 space-y-2">
                 <div class="text-white font-bold tracking-widest text-[10px] uppercase mb-3">HOW IT WORKS</div>
-                <div><span class="text-white">1.</span> Create a new diary node via <span class="text-white font-bold">+ CREATE_NODE</span></div>
+                <div><span class="text-white">1.</span> Click <span class="text-white font-bold">+ ADD NODE</span> to create a new diary node</div>
                 <div><span class="text-white">2.</span> Write entries across different dates — everything is timestamped</div>
                 <div><span class="text-white">3.</span> Click <span class="text-white font-bold">STASH DIARY NODE</span> to encrypt with AES-GCM 256-bit</div>
                 <div><span class="text-white">4.</span> A <code class="text-white">.ts64diary</code> backup file is auto-downloaded</div>
