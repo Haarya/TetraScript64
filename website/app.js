@@ -18,6 +18,8 @@ const diaryState = {
     createdAt: null,
     entries: {},       // { "YYYY-MM-DD": { text: "", stashed: false, checksum: "" } }
     currentDate: null,
+    password: null,        // The TS64-XXXX-XXXX password bound to this diary (in-memory only)
+    passwordHash: null,    // SHA-256 hex hash of the password (stored inside encrypted payload)
 };
 
 function resetDiaryState() {
@@ -26,6 +28,8 @@ function resetDiaryState() {
     diaryState.createdAt = null;
     diaryState.entries = {};
     diaryState.currentDate = null;
+    diaryState.password = null;
+    diaryState.passwordHash = null;
 }
 
 function getTodayISO() {
@@ -45,6 +49,204 @@ function formatDisplayDate(isoDate) {
     const d = new Date(isoDate + 'T00:00:00');
     return d.toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
 }
+
+// ============================================================
+// PASSWORD HASH UTILITY (for diary password verification)
+// ============================================================
+async function hashPassword(password) {
+    const enc = new TextEncoder();
+    const hashBuf = await crypto.subtle.digest('SHA-256', enc.encode(password));
+    return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function isValidTS64Password(pwd) {
+    return /^TS64-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(pwd);
+}
+
+// ============================================================
+// DIARY PASSWORD SETUP MODAL
+// ============================================================
+window.showDiaryPasswordSetup = function (callback) {
+    // Remove if already exists
+    const existing = document.getElementById('diary-password-setup-modal');
+    if (existing) existing.remove();
+
+    const suggestedPwd = generatePassword();
+
+    const modal = document.createElement('div');
+    modal.id = 'diary-password-setup-modal';
+    modal.className = 'fixed inset-0 z-[120] bg-black/90 flex items-center justify-center';
+    // Do NOT allow clicking outside to close — password must be set
+    modal.innerHTML = `
+        <div class="bg-[#030303] border border-white w-full max-w-md mx-4"
+             style="font-family:'JetBrains Mono',monospace;">
+
+            <!-- Header -->
+            <div class="flex items-center justify-between border-b border-white px-5 py-4">
+                <div>
+                    <div class="text-white font-bold text-xs tracking-widest uppercase">SET DIARY PASSWORD</div>
+                    <div class="text-zinc-600 text-[10px] tracking-widest mt-0.5">
+                        This password will be permanent for this diary
+                    </div>
+                </div>
+                <div class="text-[10px] text-zinc-600 border border-white/20 px-2 py-1">AES-GCM-256</div>
+            </div>
+
+            <!-- Body -->
+            <div class="px-5 py-5 space-y-5">
+
+                <!-- Warning -->
+                <div class="border border-yellow-500/40 bg-yellow-500/5 p-3 text-[10px] text-yellow-400 leading-relaxed">
+                    <span class="font-bold uppercase tracking-widest">⚠ IMPORTANT:</span>
+                    This password <span class="text-white font-bold">cannot be changed</span> after creation.
+                    It will be used every time you encrypt or decrypt this diary. Store it safely.
+                </div>
+
+                <!-- Tab Buttons -->
+                <div class="flex border border-white/20">
+                    <button id="pwd-tab-custom" onclick="switchPwdTab('custom')"
+                        class="flex-1 py-2.5 text-[10px] font-bold uppercase tracking-widest
+                               bg-white text-black transition-colors">
+                        SET YOUR OWN
+                    </button>
+                    <button id="pwd-tab-auto" onclick="switchPwdTab('auto')"
+                        class="flex-1 py-2.5 text-[10px] font-bold uppercase tracking-widest
+                               text-zinc-500 hover:text-white transition-colors">
+                        AUTO-GENERATE
+                    </button>
+                </div>
+
+                <!-- Custom Password Panel -->
+                <div id="pwd-panel-custom">
+                    <label class="text-[10px] text-zinc-500 uppercase tracking-widest block mb-2 font-bold">
+                        Enter Password (format: TS64-XXXX-XXXX)
+                    </label>
+                    <input type="text" id="pwd-custom-input"
+                           placeholder="TS64-XXXX-XXXX"
+                           maxlength="14"
+                           class="w-full bg-black border border-white/30 focus:border-white text-white
+                                  px-3 py-2.5 text-sm font-mono uppercase tracking-widest outline-none
+                                  transition-colors mb-3"
+                           oninput="this.value=this.value.toUpperCase()" />
+
+                    <label class="text-[10px] text-zinc-500 uppercase tracking-widest block mb-2 font-bold">
+                        Confirm Password
+                    </label>
+                    <input type="text" id="pwd-custom-confirm"
+                           placeholder="TS64-XXXX-XXXX"
+                           maxlength="14"
+                           class="w-full bg-black border border-white/30 focus:border-white text-white
+                                  px-3 py-2.5 text-sm font-mono uppercase tracking-widest outline-none
+                                  transition-colors"
+                           oninput="this.value=this.value.toUpperCase()" />
+
+                    <div id="pwd-custom-error" class="text-red-500 text-[10px] mt-2 hidden"></div>
+                </div>
+
+                <!-- Auto-Generate Panel (hidden by default) -->
+                <div id="pwd-panel-auto" class="hidden">
+                    <div class="text-[10px] text-zinc-500 uppercase tracking-widest mb-3 font-bold">
+                        Your Generated Password
+                    </div>
+                    <div class="border border-white p-4 text-center bg-black/60 cursor-pointer group relative"
+                         onclick="navigator.clipboard.writeText('${suggestedPwd}');
+                                  this.querySelector('.cp').textContent='COPIED!';
+                                  setTimeout(()=>this.querySelector('.cp').textContent='CLICK TO COPY',2000);">
+                        <div class="text-white font-bold text-lg tracking-[0.3em] font-mono">${suggestedPwd}</div>
+                        <div class="cp text-[9px] text-zinc-600 mt-2 tracking-widest group-hover:text-zinc-400
+                                    transition-colors">CLICK TO COPY</div>
+                    </div>
+                    <div class="text-[10px] text-zinc-600 mt-3 leading-relaxed">
+                        Save this password somewhere safe. You will need it every time you open this diary.
+                    </div>
+                </div>
+
+                <!-- Confirm Button -->
+                <button id="pwd-confirm-btn"
+                    class="w-full bg-white text-black font-bold py-3 text-xs uppercase tracking-widest
+                           hover:bg-zinc-200 active:scale-[0.98] transition-all"
+                    onclick="confirmDiaryPassword()">
+                    CONFIRM PASSWORD & CREATE DIARY
+                </button>
+
+            </div>
+        </div>`;
+
+    document.body.appendChild(modal);
+
+    // Store callback globally for the confirm handler
+    window._diaryPasswordCallback = callback;
+    window._diaryAutoPassword = suggestedPwd;
+
+    setTimeout(() => document.getElementById('pwd-custom-input')?.focus(), 100);
+};
+
+// Tab switcher for the password modal
+window.switchPwdTab = function (tab) {
+    const customTab = document.getElementById('pwd-tab-custom');
+    const autoTab = document.getElementById('pwd-tab-auto');
+    const customPanel = document.getElementById('pwd-panel-custom');
+    const autoPanel = document.getElementById('pwd-panel-auto');
+
+    if (tab === 'custom') {
+        customTab.className = customTab.className.replace('text-zinc-500 hover:text-white', 'bg-white text-black');
+        customTab.classList.add('bg-white', 'text-black');
+        autoTab.className = autoTab.className.replace('bg-white text-black', 'text-zinc-500 hover:text-white');
+        autoTab.classList.remove('bg-white', 'text-black');
+        autoTab.classList.add('text-zinc-500');
+        customPanel.classList.remove('hidden');
+        autoPanel.classList.add('hidden');
+        setTimeout(() => document.getElementById('pwd-custom-input')?.focus(), 50);
+    } else {
+        autoTab.className = autoTab.className.replace('text-zinc-500 hover:text-white', 'bg-white text-black');
+        autoTab.classList.add('bg-white', 'text-black');
+        customTab.className = customTab.className.replace('bg-white text-black', 'text-zinc-500 hover:text-white');
+        customTab.classList.remove('bg-white', 'text-black');
+        customTab.classList.add('text-zinc-500');
+        autoPanel.classList.remove('hidden');
+        customPanel.classList.add('hidden');
+    }
+};
+
+// Confirm password handler
+window.confirmDiaryPassword = async function () {
+    const customPanel = document.getElementById('pwd-panel-custom');
+    const isCustom = !customPanel.classList.contains('hidden');
+    const errorEl = document.getElementById('pwd-custom-error');
+    let finalPassword = '';
+
+    if (isCustom) {
+        const input1 = document.getElementById('pwd-custom-input').value.trim().toUpperCase();
+        const input2 = document.getElementById('pwd-custom-confirm').value.trim().toUpperCase();
+
+        if (!input1) {
+            if (errorEl) { errorEl.textContent = 'Password cannot be empty.'; errorEl.classList.remove('hidden'); }
+            return;
+        }
+        if (!isValidTS64Password(input1)) {
+            if (errorEl) { errorEl.textContent = 'Invalid format. Must be: TS64-XXXX-XXXX (X = A-Z or 0-9)'; errorEl.classList.remove('hidden'); }
+            return;
+        }
+        if (input1 !== input2) {
+            if (errorEl) { errorEl.textContent = 'Passwords do not match.'; errorEl.classList.remove('hidden'); }
+            return;
+        }
+        finalPassword = input1;
+    } else {
+        finalPassword = window._diaryAutoPassword;
+    }
+
+    // Close modal
+    const modal = document.getElementById('diary-password-setup-modal');
+    if (modal) modal.remove();
+
+    // Call the callback with the chosen password
+    if (window._diaryPasswordCallback) {
+        await window._diaryPasswordCallback(finalPassword);
+        window._diaryPasswordCallback = null;
+        window._diaryAutoPassword = null;
+    }
+};
 
 // ============================================================
 // CREATE NODE MODAL CONTROLS
@@ -85,15 +287,28 @@ window.launchDiaryEditor = function () {
     }
 
     const author = document.getElementById('diary-author-input').value.trim() || 'ROOT_ADMIN';
-    resetDiaryState();
-    diaryState.name = name;
-    diaryState.author = author;
-    diaryState.createdAt = new Date().toISOString();
-    diaryState.currentDate = getTodayISO();
-    diaryState.entries[diaryState.currentDate] = { text: '', stashed: false, checksum: '' };
-    localStorage.setItem('ts64_diary_draft', JSON.stringify(diaryState));
     closeCreateNodeModal();
-    switchTab('diary');
+
+    // Show password setup modal BEFORE creating the diary
+    showDiaryPasswordSetup(async function (chosenPassword) {
+        const pwdHash = await hashPassword(chosenPassword);
+
+        resetDiaryState();
+        diaryState.name = name;
+        diaryState.author = author;
+        diaryState.createdAt = new Date().toISOString();
+        diaryState.currentDate = getTodayISO();
+        diaryState.entries[diaryState.currentDate] = { text: '', stashed: false, checksum: '' };
+        diaryState.password = chosenPassword;
+        diaryState.passwordHash = pwdHash;
+
+        // Note: password is NOT saved in localStorage draft (security)
+        const draftCopy = { ...diaryState };
+        delete draftCopy.password;
+        localStorage.setItem('ts64_diary_draft', JSON.stringify(draftCopy));
+
+        switchTab('diary');
+    });
 };
 
 // ============================================================
@@ -1070,9 +1285,23 @@ function renderDiaryTab() {
         </div>
         <div class="border-t border-white p-4 space-y-3 bg-[#030303] shrink-0">
             <div class="text-[10px] font-bold tracking-[0.2em] text-zinc-500 uppercase">ENCRYPT VAULT</div>
-            <div class="text-zinc-600 text-[10px] leading-relaxed">
-                Encrypt the entire diary node with AES-GCM 256-bit. All entries locked behind a single Access Key.
-            </div>
+            ${diaryState.password
+            ? `<div class="border border-green-500/30 bg-green-500/5 p-2 text-[10px] text-green-400 leading-relaxed">
+                       <span class="font-bold">✓ PASSWORD LOCKED</span> — Re-encryption will use your existing password.
+                   </div>
+                   <div class="border border-white/20 p-2 text-center">
+                       <div class="text-[9px] text-zinc-600 tracking-widest mb-1">CURRENT PASSWORD</div>
+                       <div class="text-white font-bold font-mono text-xs tracking-widest cursor-pointer"
+                            onclick="navigator.clipboard.writeText('${diaryState.password}');
+                                     this.textContent='COPIED!';
+                                     var self=this; setTimeout(function(){self.textContent='${diaryState.password}'},1500);">
+                           ${diaryState.password}
+                       </div>
+                   </div>`
+            : `<div class="text-zinc-600 text-[10px] leading-relaxed">
+                       Encrypt the entire diary node with AES-GCM 256-bit. You will be asked to set a password.
+                   </div>`
+        }
             <button onclick="encryptDiary()"
                     class="w-full bg-white text-black font-bold py-2.5 text-[10px] uppercase tracking-widest hover:bg-zinc-200 transition-colors">
                 STASH DIARY NODE
@@ -1381,8 +1610,10 @@ window.unlockDiaryFromTab = async function () {
             </div>`;
         }).join('');
 
-        // Store the decrypted diary object globally so OPEN IN EDITOR can access it
+        // Store the decrypted diary object AND the password globally
+        // so OPEN IN EDITOR can carry them forward
         window._lastDecryptedDiary = diaryObj;
+        window._lastDecryptedDiaryPassword = pwd;
 
         resultEl.innerHTML = `
             <div class="border border-white p-4 relative font-mono mt-2 mb-4">
@@ -1466,9 +1697,18 @@ window.openDecryptedDiaryInEditor = function () {
 
     diaryState.currentDate = dates[dates.length - 1] || null;
 
-    // Save draft and re-render
-    localStorage.setItem('ts64_diary_draft', JSON.stringify(diaryState));
+    // ── CARRY FORWARD THE PASSWORD ──────────────────────────
+    // The password used to decrypt is now the diary's permanent password
+    diaryState.password = window._lastDecryptedDiaryPassword || null;
+    diaryState.passwordHash = diaryObj.passwordHash || null;
+
+    // Save draft (WITHOUT password — password stays in-memory only)
+    const draftCopy = { ...diaryState };
+    delete draftCopy.password;
+    localStorage.setItem('ts64_diary_draft', JSON.stringify(draftCopy));
+
     window._lastDecryptedDiary = null;
+    window._lastDecryptedDiaryPassword = null;
     _pendingDiaryFile = null;
     renderDiaryTab();
     renderSidebar();
@@ -1494,6 +1734,21 @@ window.encryptDiary = async function () {
         return;
     }
 
+    // ── PASSWORD RESOLUTION ──────────────────────────────────
+    // If diary already has a password (set at creation or carried from unlock), use it.
+    // If not (legacy draft from before password update), prompt user to set one.
+    if (!diaryState.password) {
+        showDiaryPasswordSetup(async function (chosenPassword) {
+            diaryState.password = chosenPassword;
+            diaryState.passwordHash = await hashPassword(chosenPassword);
+            // Re-call encryptDiary now that password is set
+            await window.encryptDiary();
+        });
+        return;
+    }
+
+    const pwd = diaryState.password; // ← USE THE PERSISTENT PASSWORD
+
     resultEl.innerHTML = `<div class="text-zinc-500 text-[10px] animate-pulse tracking-widest mt-2 uppercase">ENCRYPTING NODE...</div>`;
 
     try {
@@ -1502,10 +1757,10 @@ window.encryptDiary = async function () {
             author: diaryState.author,
             createdAt: diaryState.createdAt,
             encryptedAt: new Date().toISOString(),
+            passwordHash: diaryState.passwordHash, // Store hash in payload for verification
             entries: diaryState.entries,
         };
         const diaryJSON = JSON.stringify(diaryPayload);
-        const pwd = generatePassword();
         const id = pwd.split('-')[1];
         const payloadBytes = new TextEncoder().encode(diaryJSON);
 
@@ -1525,9 +1780,9 @@ window.encryptDiary = async function () {
         await dbSet('TS64_DIARY_' + id + '_header', hdr);
 
         let offset = 0, chunkIndex = 0;
-        const CHUNK_SIZE = 1048576; // 1MB 
+        const DIARY_CHUNK_SIZE = 1048576; // 1MB
         while (offset < payloadBytes.byteLength) {
-            const chunk = payloadBytes.slice(offset, offset + CHUNK_SIZE);
+            const chunk = payloadBytes.slice(offset, offset + DIARY_CHUNK_SIZE);
             const iv = crypto.getRandomValues(new Uint8Array(12));
             const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, chunk);
             const env = new Uint8Array(20 + ct.byteLength);
@@ -1537,7 +1792,7 @@ window.encryptDiary = async function () {
             cv.setUint32(16, ct.byteLength, true);
             env.set(new Uint8Array(ct), 20);
             await dbSet(`TS64_DIARY_${id}_chunk_${chunkIndex}`, env);
-            offset += CHUNK_SIZE;
+            offset += DIARY_CHUNK_SIZE;
             chunkIndex++;
         }
 
@@ -1587,7 +1842,7 @@ window.encryptDiary = async function () {
 
         renderDiaryTab();
 
-        // Show key card
+        // Show key card — reminder of the SAME password
         const res2 = document.getElementById('diary-encrypt-result');
         if (res2) res2.innerHTML = `
             <div class="border border-white bg-[#020202] p-3 space-y-2 font-mono mt-2 text-left">
@@ -1597,12 +1852,15 @@ window.encryptDiary = async function () {
                 <div class="text-zinc-500 text-[10px]">Backup: <span class="text-white font-bold">diary_node_${id}.ts64diary</span> (auto-downloaded)</div>
                 <div class="border border-white/40 p-3 text-center cursor-pointer mt-3 hover:border-white transition-colors group relative"
                      onclick="navigator.clipboard.writeText('${pwd}'); this.querySelector('.ch').textContent='COPIED!'; setTimeout(()=>this.querySelector('.ch').textContent='CLICK TO COPY',2000);">
-                    <div class="text-[10px] text-zinc-500 mb-1 font-bold">ACCESS KEY — SAVE THIS</div>
+                    <div class="text-[10px] text-zinc-500 mb-1 font-bold">ACCESS KEY — SAME AS BEFORE</div>
                     <div class="text-white font-bold font-mono tracking-widest text-xs">${pwd}</div>
                     <div class="ch text-[9px] text-zinc-600 mt-2 tracking-widest">CLICK TO COPY</div>
                 </div>
                 <div class="text-[10px] text-zinc-500 leading-relaxed mt-2 p-2 bg-white/5 border border-white/10">
                     Terminal: <span class="text-white font-bold">unlock ${pwd}</span>
+                </div>
+                <div class="text-[10px] text-green-400/80 mt-1">
+                    ✓ Password unchanged — same key works for all versions of this diary
                 </div>
             </div>`;
 
@@ -2549,6 +2807,10 @@ function initTerminalEngine() {
                             const diaryStr = new TextDecoder('utf-8', { fatal: true }).decode(merged);
                             const diaryObj = JSON.parse(diaryStr);
 
+                            // Store so OPEN IN EDITOR can carry password
+                            window._lastDecryptedDiary = diaryObj;
+                            window._lastDecryptedDiaryPassword = pwd;
+
                             const sortedDates = Object.keys(diaryObj.entries).sort();
                             const containerId = 'diary-unlock-' + Date.now();
 
@@ -2621,7 +2883,7 @@ function initTerminalEngine() {
                                     </div>
                                     <div class="space-y-0 divide-y divide-white/10">${rowsHtml}</div>
 
-                                    <div class="mt-4 pt-3 border-t border-white/10 flex gap-3">
+                                    <div class="mt-4 pt-3 border-t border-white/10 flex gap-3 flex-wrap">
                                         <button onclick="(function(){
                                             document.querySelectorAll('[id^=\\'${containerId}-text-\\']').forEach(function(el){el.classList.remove('hidden')});
                                             document.querySelectorAll('[id$=\\'-arrow\\']').forEach(function(el){if(el.id.startsWith('${containerId}')){el.textContent='▼'}});
@@ -2633,6 +2895,10 @@ function initTerminalEngine() {
                                             document.querySelectorAll('[id$=\\'-arrow\\']').forEach(function(el){if(el.id.startsWith('${containerId}')){el.textContent='▶'}});
                                         })()" class="text-[10px] text-zinc-500 hover:text-white border border-white/20 px-3 py-1 tracking-widest hover:border-white transition-colors">
                                             COLLAPSE ALL
+                                        </button>
+                                        <button onclick="switchTab('diary'); openDecryptedDiaryInEditor()"
+                                            class="ml-auto bg-white text-black font-bold px-4 py-1.5 text-[10px] uppercase tracking-widest hover:bg-zinc-200 transition-colors">
+                                            OPEN IN EDITOR
                                         </button>
                                     </div>
                                 </div>`;
