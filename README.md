@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/build-V2.4.0-white?style=flat-square" alt="Build" />
+  <img src="https://img.shields.io/badge/build-V6.0.0-white?style=flat-square" alt="Build" />
   <img src="https://img.shields.io/badge/encryption-AES--GCM%20256--bit-white?style=flat-square" alt="Encryption" />
   <img src="https://img.shields.io/badge/backend-none-white?style=flat-square" alt="No Backend" />
   <img src="https://img.shields.io/badge/storage-IndexedDB-white?style=flat-square" alt="Storage" />
@@ -58,8 +58,8 @@ Think of it as your personal, air-gapped data safe — accessed through a hacker
 | **Terminal Interface** | Interact via a full hacker-style terminal with command history and drag-and-drop support. |
 | **Dashboard** | Real-time vault memory usage, stash counts per type, and storage quota display. |
 | **Offline Backups** | Export any stash or diary node as a portable encrypted file. Drag-drop to restore anywhere. |
-| **Zero Dependencies** | No Node.js, no build step, no npm. Just open `index.html`. |
-| **CRT Aesthetic UI** | Full dark-mode UI with scanlines, monospace font, and a classic terminal feel. |
+| **Zero Dependencies** | No Node.js, no compilation step, no npm required. Tailwind CSS is loaded via CDN. |
+| **Advanced CRT UI** | Multi-panel dark-mode interface with sidebars, scanlines, monospace fonts, and a robust terminal layout. |
 
 ---
 
@@ -130,9 +130,15 @@ TetraScript64/
 
 ---
 
-## 🖥️ Tabs & UI Overview
+## 🖥️ Interface Architecture & Modules
 
-The app has a persistent header nav with six tabs:
+The application features a rich, multi-panel design inspired by hacker aesthetics:
+- **Header:** Navigation menu, user profile (`ROOT_ADMIN`), and active network indicator.
+- **Left Sidebar:** A global Vault Memory utilization gauge and a directory view for active nodes.
+- **Center Viewport:** A dynamic workspace with a grid background that renders the active module.
+- **Footer:** Persistent action bar containing the `+ CREATE_NODE` button, terminal prompt status, and system telemetry.
+
+The core modules accessed from the header are:
 
 ### 📊 Dashboard
 Live vault summary — total stash count, memory usage bar, breakdown by type (text / audio / video / diary), and storage quota.
@@ -144,7 +150,7 @@ Drag-and-drop or file-select interface to encrypt audio files. Encrypted audio i
 Drag-and-drop or file-select interface for video files. Encrypted output is a portable `.ts64vid` binary file saved directly to your disk (no IndexedDB for video). Decrypt by dragging the `.ts64vid` back into the Video tab or using `unlock_video` in Terminal.
 
 ### 📔 Diary
-A date-indexed personal journal with a retro `NODE_HISTORY.LOG` aesthetic. Each diary is a named vault — created via **+ CREATE_NODE** — with entries automatically indexed by date. Full support for multi-entry, multi-day writing, and encrypted export as `.ts64diary` files.
+A date-indexed personal journal with a retro `NODE_HISTORY.LOG` aesthetic. Each diary is a named vault — created via **+ CREATE_NODE** — with entries automatically indexed by date. Features persistent password caching per session for seamless multi-entry writing, and encrypted export as `.ts64diary` files.
 
 ### 💻 Terminal
 The command-line heart of TetraScript64. Supports all encryption, decryption, and vault management commands. Drag-and-drop `.ts64`, `.ts64vid`, or `.ts64diary` files directly onto the terminal to restore backups.
@@ -289,9 +295,10 @@ Full step-by-step instructions for each platform: [`docs/deployment_guide.md`](d
 - [x] Personal diary with date-indexed encrypted entries
 - [x] Dashboard with real-time vault stats
 - [x] Drag-and-drop restore for all backup types
+- [x] Advanced multi-panel UI overhaul featuring Tailwind CSS
+- [x] Session-persistent passwords for Diary vaults
 - [ ] Multi-key stash listing (`list` command)
 - [ ] Password-hint system (optional, opt-in)
-- [ ] Optional local Tailwind bundle for true zero-CDN deployment
 - [ ] Mobile responsive layout polish
 
 ---
