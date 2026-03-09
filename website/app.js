@@ -2433,13 +2433,43 @@ function initTerminalEngine() {
             } else {
                 const blocks = encodeTextToBinaryBlocks(args);
                 const encodedPhrase = blocks.join(' ');
+                const copyBtnId = 'copy-bin-' + Date.now();
                 resWrap.innerHTML = `
                     <div class="font-bold text-white mb-3 tracking-wider border-b border-white/10 pb-2">ENCODING SEQUENCE</div>
                     <div class="text-sm text-zinc-500 mb-4">Sequence: <span class="text-white">${blocks.length} BLOCKS</span></div>
                     <div class="mt-4 p-5 border border-white/20 bg-white/5 text-zinc-300 font-mono text-xs tracking-widest break-all flex gap-3 items-start">
                         <span class="shrink-0">></span>
                         <span class="whitespace-pre-wrap leading-relaxed">${encodedPhrase}</span>
+                    </div>
+                    <div class="mt-3 flex items-center gap-3">
+                        <button id="${copyBtnId}"
+                            class="flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-bold px-4 py-2 uppercase tracking-widest transition-all duration-200 active:scale-95">
+                            <span class="material-symbols-outlined text-sm" style="font-size:14px;">content_copy</span>
+                            COPY BINARY
+                        </button>
+                        <span id="${copyBtnId}-feedback" class="text-xs text-zinc-500 transition-opacity duration-300 opacity-0">Copied to clipboard ✓</span>
                     </div>`;
+                setTimeout(() => {
+                    const copyBtn = document.getElementById(copyBtnId);
+                    if (copyBtn) {
+                        copyBtn.addEventListener('click', () => {
+                            navigator.clipboard.writeText(encodedPhrase).then(() => {
+                                copyBtn.innerHTML = `<span class="material-symbols-outlined text-sm" style="font-size:14px;">check</span> COPIED ✓`;
+                                copyBtn.classList.add('bg-white/20', 'border-white/40');
+                                const feedback = document.getElementById(copyBtnId + '-feedback');
+                                if (feedback) { feedback.classList.remove('opacity-0'); }
+                                setTimeout(() => {
+                                    copyBtn.innerHTML = `<span class="material-symbols-outlined text-sm" style="font-size:14px;">content_copy</span> COPY BINARY`;
+                                    copyBtn.classList.remove('bg-white/20', 'border-white/40');
+                                    if (feedback) { feedback.classList.add('opacity-0'); }
+                                }, 2000);
+                            }).catch(() => {
+                                copyBtn.textContent = 'COPY FAILED';
+                                setTimeout(() => { copyBtn.innerHTML = `<span class="material-symbols-outlined text-sm" style="font-size:14px;">content_copy</span> COPY BINARY`; }, 2000);
+                            });
+                        });
+                    }
+                }, 0);
             }
 
         } else if (command === 'decode') {
